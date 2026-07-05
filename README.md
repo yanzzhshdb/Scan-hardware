@@ -1,203 +1,182 @@
-# 📱 CEK HARDWARE ANDROID v2.0
+# 📱 CEK HARDWARE ANDROID v3.0
 
-> **Script Python ringan untuk mengecek hardware Android secara lengkap**
-> Tanpa library eksternal — baca langsung dari `/proc` & `/sys`
+> **Script Python untuk mengecek hardware Android — tanpa root, tanpa library eksternal**
+> Support Android 10, 11, 12, 13, 14+ termasuk HP Oppo, Samsung, Xiaomi, Vivo, dll.
 
 [![Python](https://img.shields.io/badge/Python-3.6%2B-blue?logo=python)](https://python.org)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Termux-green?logo=android)](https://termux.dev)
 [![Dependency](https://img.shields.io/badge/Dependency-Zero-brightgreen)](.)
+[![Root](https://img.shields.io/badge/Root-Tidak%20Perlu-orange)](.)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey)](LICENSE)
 
 ---
 
-## ✨ Fitur (18 Fitur Lengkap)
+## ✨ 18 Fitur Lengkap
 
-| No | Fitur | Keterangan |
-|----|-------|-----------|
-| 1 | 🖥️ **Info CPU** | Model, core, frekuensi per-core, governor, BogoMIPS, load avg, usage real-time |
-| 2 | 💾 **Info RAM** | Total, terpakai, tersedia, buffer, cache, swap, active/inactive |
-| 3 | 💿 **Info Storage** | Semua mount point, I/O diskstats, persentase pemakaian |
-| 4 | 🔋 **Info Baterai** | Persentase, voltage, arus, siklus charge, health, suhu baterai |
-| 5 | 🌡️ **Suhu Hardware** | Semua thermal zone, hwmon sensor, status kritis/panas/normal |
-| 6 | 🌐 **Info Jaringan** | IP lokal/publik, MAC, traffic RX/TX, latensi TCP ke 4 server |
-| 7 | 📱 **Info Sistem & OS** | Android version, SDK, build info, uptime, getprop lengkap |
-| 8 | ⚙️ **Proses Aktif** | Top 15 proses tertinggi CPU, RAM per proses, status |
-| 9 | 📡 **Kecepatan Jaringan** | Download/upload real-time + uji download nyata dari Cloudflare |
-| 10 | ⚡ **Benchmark CPU** | 4 tes: π Leibniz, float ops, multi-thread, memori bandwidth |
-| 11 | 📊 **Monitor Real-time** | Live chart CPU%, RAM%, net speed setiap 1 detik selama 10 detik |
-| 12 | 📋 **Laporan Lengkap** | Export JSON + TXT dengan semua data hardware |
-| 13 | 🎮 **Info GPU** ⭐NEW | Adreno (kgsl), Mali, DevFreq, DRM — frekuensi, utilisasi, suhu GPU |
-| 14 | 📶 **WiFi Detail** ⭐NEW | Signal level, link quality, iwconfig, iwgetid, Android WiFi props |
-| 15 | 🔧 **Kernel & Modul** ⭐NEW | Versi kernel, 25 modul dimuat, kernel params, boot cmdline |
-| 16 | 🧮 **Virtual Memory Stats** ⭐NEW | Page fault, swap I/O, OOM kill, context switch, activity rate/s |
-| 17 | 🧭 **Sensor IIO** ⭐NEW | Akselerometer, giroskop, magnetometer, proximity, cahaya, suhu |
-| 18 | 🤖 **Android Lanjut** ⭐NEW | dumpsys battery/cpu, pm list packages, wm size, settings system |
+| No | Ikon | Fitur | Data yang Ditampilkan |
+|----|------|-------|----------------------|
+| 1 | 🖥️ | **Info CPU** | Model, core, frekuensi per-core, governor, load average, usage real-time |
+| 2 | 💾 | **Info RAM** | Total, terpakai, tersedia, buffer, cache, swap, zRAM ratio |
+| 3 | 💿 | **Info Storage** | Semua partisi, persentase, df -h output |
+| 4 | 🔋 | **Info Baterai** | Persentase, voltage, arus, health, siklus charge, suhu |
+| 5 | 🌡️ | **Suhu Hardware** | Semua thermal zone + suhu baterai |
+| 6 | 🌐 | **Info Jaringan** | IP, statistik RX/TX, latensi TCP |
+| 7 | 📱 | **Info Sistem & OS** | Brand, model, Android version, SDK, build info via getprop |
+| 8 | ⚙️ | **Proses Aktif** | Top proses via `top`/`ps` — compatible Android 10+ |
+| 9 | 📡 | **Kecepatan Jaringan** | Download/upload real-time + speed test Cloudflare |
+| 10 | ⚡ | **Benchmark CPU** | 4 tes: π, float ops, multi-thread, memori bandwidth |
+| 11 | 📊 | **Monitor Real-time** | CPU%, RAM%, suhu, net speed live setiap 1 detik |
+| 12 | 📋 | **Laporan Lengkap** | Export JSON + TXT semua data hardware |
+| 13 | 🎮 | **Info GPU** | Identifikasi via getprop + devfreq (Adreno/Mali) |
+| 14 | 📶 | **WiFi Detail** | Interface, IP, statistik, DNS, getprop WiFi |
+| 15 | 🔧 | **Kernel & Sistem** | Versi kernel, parameter /proc/sys, SELinux |
+| 16 | 🧮 | **Virtual Memory Stats** | Page fault, swap I/O, OOM kill, activity rate/s |
+| 17 | 🧭 | **Sensor Hardware** | dumpsys sensorservice, IIO, input devices |
+| 18 | 🤖 | **Android Lanjut** | pm packages, wm display, settings, getprop++ |
 
 ---
 
-## 🚀 Cara Instalasi & Penggunaan
+## 🚀 Cara Instalasi (Termux di Android)
 
-### Android (Termux) — DIREKOMENDASIKAN
-
-**1. Install Termux**
+### Langkah 1 — Install Termux
 ```
-Download dari F-Droid (bukan Play Store):
+Download dari F-Droid (BUKAN dari Play Store — versi Play Store sudah tidak diupdate):
 https://f-droid.org/packages/com.termux/
 ```
 
-**2. Buka Termux dan update paket**
+### Langkah 2 — Buka Termux, update paket
 ```bash
 pkg update && pkg upgrade -y
 ```
 
-**3. Install Python**
+### Langkah 3 — Install Python
 ```bash
 pkg install python -y
 ```
 
-**4. Download script**
+### Langkah 4 — Download script
 
-Cara A — clone dari GitHub:
+**Cara A — Clone dari GitHub (direkomendasikan):**
 ```bash
 pkg install git -y
-git clone https://github.com/yanzzhshdb/Scan-hardware
+git clone https://github.com/USERNAME/cek-hardware-android.git
+cd cek-hardware-android
 ```
 
-Cara B — download langsung:
+**Cara B — Download file langsung:**
 ```bash
 curl -O https://raw.githubusercontent.com/USERNAME/cek-hardware-android/main/cek_hardware_android.py
 ```
 
-Cara C — copy manual ke Termux:
+**Cara C — Copy dari penyimpanan HP:**
 ```bash
-# Salin file ke folder Downloads Android, lalu di Termux:
+# Salin file ke folder Downloads HP, lalu di Termux:
 cp /sdcard/Download/cek_hardware_android.py ~/
 cd ~
 ```
 
-**5. Jalankan**
+### Langkah 5 — Jalankan
 ```bash
 python3 cek_hardware_android.py
 ```
 
----
-
-### Linux / PC (Ubuntu, Debian, Arch, dll)
-
-```bash
-# Install Python jika belum ada
-sudo apt install python3 -y        # Ubuntu/Debian
-# atau
-sudo pacman -S python              # Arch
-
-# Jalankan langsung
-python3 cek_hardware_android.py
-```
-
----
-
-### Windows (WSL / Git Bash)
-
-```bash
-# Di WSL Ubuntu:
-python3 cek_hardware_android.py
-
-# Catatan: Beberapa fitur tidak tersedia di Windows
-# karena /proc dan /sys hanya ada di Linux/Android
-```
+Selesai! Tidak perlu `pip install` apapun.
 
 ---
 
 ## 🎮 Cara Pakai
 
-Setelah dijalankan, akan muncul menu interaktif:
+Setelah dijalankan akan muncul menu:
 
 ```
-══════════════════════════════════════════════════════════════════
-   CEK HARDWARE — ANDROID v2.0  ·  ZERO DEPENDENCY
-   Baca /proc & /sys langsung — tanpa psutil
-══════════════════════════════════════════════════════════════════
-  1   🖥️   Info CPU ...
-  2   💾   Info RAM ...
+════════════════════════════════════════════════════════════════════
+   CEK HARDWARE ANDROID v3.0  ·  ZERO DEPENDENCY
+   Support Android 10+ · Tanpa root · Tanpa psutil
+════════════════════════════════════════════════════════════════════
+  1  🖥️  Info CPU ...
+  2  💾  Info RAM ...
   ...
- 18   🤖   Android Lanjut ...
+ 18  🤖  Android Lanjut ...
 
-    0   🚀 Jalankan Semua 18 Fitur
-    q   ❌ Keluar
-──────────────────────────────────────────────────────────────────
+    0  🚀 Jalankan Semua 18 Fitur
+    q  ❌ Keluar
+────────────────────────────────────────────────────────────────────
   Pilih [1-18 / 0=semua / q=keluar]:
 ```
 
 | Input | Aksi |
 |-------|------|
-| `1` – `18` | Jalankan satu fitur spesifik |
+| `1` hingga `18` | Jalankan fitur tertentu |
 | `0` | Jalankan semua 18 fitur sekaligus |
-| `q` | Keluar dari program |
-| `Ctrl+C` | Stop fitur yang sedang berjalan / keluar |
+| `q` atau `keluar` | Keluar dari program |
+| `Ctrl+C` | Stop fitur yang sedang jalan |
 
 ---
 
 ## 📤 Export Laporan (Fitur 12)
 
-Pilih menu **12** untuk export otomatis ke:
+Pilih `12` untuk export otomatis:
 
 | Format | Nama File | Isi |
 |--------|-----------|-----|
-| **JSON** | `laporan_YYYYMMDD_HHMMSS.json` | Data terstruktur lengkap (CPU, RAM, storage, baterai, thermal, jaringan) |
-| **TXT**  | `laporan_YYYYMMDD_HHMMSS.txt`  | Teks ringkas siap dibaca / dikirim |
+| **JSON** | `laporan_YYYYMMDD_HHMMSS.json` | Data lengkap terstruktur |
+| **TXT** | `laporan_YYYYMMDD_HHMMSS.txt` | Ringkasan siap dibaca |
 
-File tersimpan di folder saat script dijalankan.
+File disimpan di folder saat script dijalankan (biasanya `~/`).
+
+---
+
+## 🛡️ Kompatibilitas Android 10+
+
+Script ini dirancang untuk menangani **pembatasan keamanan Android 10+** secara elegan:
+
+| Path / Fitur | Android < 10 | Android 10+ | Solusi v3.0 |
+|---|:---:|:---:|---|
+| `/proc/net/dev` (traffic) | ✅ | ❌ Blocked | Gunakan `/sys/class/net/*/statistics/` |
+| `/proc/net/wireless` (WiFi) | ✅ | ❌ Blocked | Gunakan `getprop` + `dumpsys wifi` |
+| `/proc/[pid]/*` (proses lain) | ✅ | ❌ Blocked | Gunakan `top` / `ps` |
+| `/proc/modules` (kernel) | ✅ | ❌ Blocked | Tampilkan pesan informatif |
+| MAC Address | ✅ Real | ❌ Randomized | Deteksi dan beri label "(privasi)" |
+| `/sys/class/kgsl/` (GPU) | Parsial | ❌ Blocked | Identifikasi via `getprop` + devfreq |
+| `/sys/bus/iio/` (sensor) | Parsial | ❌ Blocked | Gunakan `dumpsys sensorservice` |
+| `/proc/cpuinfo` | ✅ | ✅ | Tetap digunakan |
+| `/proc/meminfo` | ✅ | ✅ | Tetap digunakan |
+| `/proc/stat` (CPU%) | ✅ | ✅ | Tetap digunakan |
+| `/sys/class/thermal/` (suhu) | ✅ | ✅ Parsial | Dengan fallback graceful |
+| `/sys/class/power_supply/` | ✅ | ✅ Parsial | Dengan fallback ke `dumpsys` |
+| `getprop` | ✅ | ✅ | Digunakan secara luas |
+
+> **Prinsip v3.0:** Setiap path dicoba dulu. Jika blocked → coba alternatif → jika tidak ada → tampilkan pesan jelas, **tidak pernah crash**.
 
 ---
 
 ## ⚙️ Sumber Data (Zero Dependency)
 
-Script ini **tidak menggunakan library eksternal** apapun. Semua data dibaca langsung dari:
+Tidak ada library eksternal. Semua dari built-in Python + sistem file Android:
 
-| Sumber | Data yang Dibaca |
-|--------|-----------------|
-| `/proc/cpuinfo` | Model, core, fitur CPU |
-| `/proc/stat` | Penggunaan CPU real-time |
+| Sumber | Data |
+|--------|------|
+| `/proc/cpuinfo` | Model CPU, core, ABI |
+| `/proc/stat` | CPU usage real-time |
 | `/proc/meminfo` | RAM, swap, buffer, cache |
-| `/proc/mounts` | Daftar partisi dan mount point |
-| `/proc/diskstats` | I/O disk (baca/tulis) |
-| `/proc/net/dev` | Traffic jaringan RX/TX |
-| `/proc/net/wireless` | Signal WiFi, link quality |
-| `/proc/modules` | Modul kernel yang aktif |
-| `/proc/vmstat` | Page fault, swap activity, OOM |
-| `/proc/cmdline` | Kernel boot arguments |
-| `/proc/version` | Versi kernel lengkap |
-| `/sys/class/thermal/` | Suhu semua zona thermal |
-| `/sys/class/power_supply/` | Info baterai detail |
-| `/sys/class/kgsl/` | GPU Adreno (Qualcomm) |
-| `/sys/class/devfreq/` | Frekuensi GPU/DSP/Bus |
-| `/sys/class/net/wlan*/` | Detail interface WiFi |
-| `/sys/bus/iio/devices/` | Sensor IIO (akselerometer, dll) |
-| `/sys/class/hwmon/` | Hardware monitor sensor |
-| `getprop` | Properties Android system |
-| `dumpsys` | System service Android |
-| `pm` | Package manager Android |
-| `wm` | Window manager (resolusi, density) |
-| `iwconfig` / `iw` | Info WiFi lanjut |
-
----
-
-## 🔐 Permission & Akses Root
-
-Sebagian besar fitur **tidak perlu root**. Tabel berikut menjelaskan kebutuhan akses:
-
-| Fitur | Tanpa Root | Dengan Root | Catatan |
-|-------|:----------:|:-----------:|---------|
-| 1–9 (CPU, RAM, Storage, dll) | ✅ | ✅ | Berjalan penuh |
-| 10 Benchmark | ✅ | ✅ | Pure Python |
-| 11 Monitor | ✅ | ✅ | Berjalan penuh |
-| 12 Laporan | ✅ | ✅ | Export normal |
-| 13 GPU Adreno/Mali | ⚠️ Terbatas | ✅ | Root dapat lebih banyak data |
-| 14 WiFi Detail | ✅ | ✅ | `iwconfig` butuh root untuk channel |
-| 15 Kernel Modul | ⚠️ Terbatas | ✅ | `/proc/modules` sering dibatasi |
-| 16 vmstat | ✅ | ✅ | Berjalan penuh |
-| 17 Sensor IIO | ⚠️ Terbatas | ✅ | Bergantung device |
-| 18 Android Lanjut | ⚠️ Terbatas | ✅ | dumpsys butuh permission |
+| `/proc/mounts` | Daftar partisi |
+| `/proc/uptime` | Uptime sistem |
+| `/proc/vmstat` | Page fault, swap I/O, OOM |
+| `/proc/version` | Versi kernel |
+| `/sys/class/net/*/statistics/` | Traffic jaringan (RX/TX) ← pengganti `/proc/net/dev` |
+| `/sys/class/thermal/*/temp` | Suhu semua zone |
+| `/sys/class/power_supply/*` | Data baterai |
+| `/sys/class/devfreq/` | Frekuensi GPU/DSP |
+| `/sys/devices/system/cpu/*/cpufreq/` | Frekuensi CPU per-core |
+| `/sys/block/zram*/mm_stat` | Info kompresi zRAM |
+| `getprop` | Semua Android properties (brand, model, OS, dll) |
+| `dumpsys battery` | Info baterai via Android service |
+| `dumpsys wifi` | Koneksi WiFi aktif |
+| `dumpsys sensorservice` | Daftar sensor hardware |
+| `pm list packages` | Daftar aplikasi terinstall |
+| `wm size/density` | Resolusi dan density layar |
+| `top` / `ps` | Proses aktif |
+| `df -h` | Info storage |
 
 ---
 
@@ -205,78 +184,90 @@ Sebagian besar fitur **tidak perlu root**. Tabel berikut menjelaskan kebutuhan a
 
 ```
 cek-hardware-android/
-├── cek_hardware_android.py    # Script utama (v2.0, 18 fitur)
-├── requirements_android.txt   # Kosong — zero dependency
+├── cek_hardware_android.py    # Script utama — 18 fitur, v3.0
+├── requirements_android.txt   # Kosong (zero dependency)
 └── README.md                  # Dokumentasi ini
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+**❓ "Permission denied" di banyak tempat**
+```
+Normal di Android 10+! Script sudah dirancang untuk ini.
+Fitur tetap berjalan dengan data yang tersedia.
+Tidak perlu root untuk fitur-fitur utama.
+```
+
+**❓ Python tidak ditemukan**
+```bash
+pkg install python -y
+```
+
+**❓ Warna tidak muncul di terminal**
+```bash
+# Test terminal support ANSI:
+echo -e "\033[92mHijau\033[0m"
+# Gunakan Termux (bukan JuiceSSH untuk koneksi lokal)
+```
+
+**❓ Fitur 8 (Proses) tidak tampil proses sistem**
+```
+Normal di Android 10+. Hanya proses milik Termux yang bisa dilihat.
+Script menggunakan top/ps sebagai alternatif.
+```
+
+**❓ Fitur 13 (GPU) tidak tampil detail**
+```
+GPU detail membutuhkan root di Android 10+.
+Script menampilkan identifikasi GPU dari SoC (getprop) sebagai alternatif.
+```
+
+**❓ Fitur 17 (Sensor) kosong**
+```bash
+# Coba jalankan dumpsys manual:
+dumpsys sensorservice | head -50
+# Jika kosong, sensor membutuhkan akses yang lebih tinggi.
+```
+
+**❓ dumpsys tidak bisa diakses**
+```
+Di Termux tanpa Shizuku/ADB, beberapa dumpsys sub-command terbatas.
+Cara bypass: gunakan Shizuku app + Termux permission.
 ```
 
 ---
 
 ## 📋 Changelog
 
-### v2.0 (Terbaru)
-- ✅ **+6 fitur baru**: GPU Info, WiFi Detail, Kernel & Modul, vmstat, Sensor IIO, Android Lanjut
-- ✅ Total 18 fitur (sebelumnya 12)
-- ✅ Tambah export thermal ke laporan JSON/TXT
-- ✅ Perbaikan helper `na()` untuk nilai kosong
-- ✅ UI menu diperbarui dengan highlight fitur baru `[NEWv2]`
-- ✅ Benchmark CPU: gunakan `_n_cores()` terpusat
-- ✅ Fitur 6: tampilkan error count per interface
+### v3.0 — Android 10+ Full Support (Terbaru)
+- ✅ **Rewrite total** untuk compatibility Android 10, 11, 12, 13, 14+
+- ✅ **Network stats**: ganti `/proc/net/dev` → `/sys/class/net/*/statistics/` (tidak blocked)
+- ✅ **Proses**: ganti direct `/proc/<pid>` → `top`/`ps` (Android 10+ compatible)
+- ✅ **GPU**: gunakan `getprop` + devfreq sebagai alternatif kgsl
+- ✅ **WiFi**: fokus pada `getprop` + `dumpsys wifi` + `/sys/class/net/wlan*/`
+- ✅ **Sensor**: gunakan `dumpsys sensorservice` sebagai sumber utama
+- ✅ **MAC address**: deteksi randomisasi Android 10+, beri label informatif
+- ✅ **Zero crash**: setiap path/command dibungkus try/except + pesan alternatif
+- ✅ **Monitor (Fitur 11)**: tambah kolom suhu real-time
+- ✅ **Storage**: tambah fallback `df -h`
+- ✅ **zRAM**: tampilkan rasio kompresi
+
+### v2.0
+- ✅ 18 fitur (dari 12)
+- ✅ GPU, WiFi, Kernel, vmstat, Sensor IIO, Android Lanjut
 
 ### v1.0
-- ✅ 12 fitur dasar: CPU, RAM, Storage, Baterai, Suhu, Jaringan, OS, Proses, NetSpeed, Benchmark, Monitor, Laporan
-- ✅ Zero dependency, baca langsung dari `/proc` dan `/sys`
-- ✅ Support Android via `getprop`
-- ✅ Export JSON + TXT
-
----
-
-## 🛠️ Troubleshooting
-
-**Script tidak jalan di Termux?**
-```bash
-# Pastikan Python sudah terinstall
-python3 --version
-
-# Jika belum:
-pkg install python -y
-```
-
-**Fitur 13 (GPU) tidak tampil data?**
-```
-Normal — beberapa device menyembunyikan /sys/class/kgsl tanpa root.
-Coba jalankan Termux dengan akses root jika device sudah di-root.
-```
-
-**Fitur 18 (dumpsys) tidak jalan?**
-```
-dumpsys butuh akses khusus. Di Termux biasa (non-root), beberapa
-sub-command mungkin tidak tersedia. Gunakan Termux + Shizuku
-atau ADB over WiFi untuk akses penuh.
-```
-
-**Warna tidak tampil di terminal?**
-```bash
-# Pastikan terminal support warna ANSI
-echo -e "\033[92mTest warna\033[0m"
-# Jika tidak ada warna, coba terminal lain (JuiceSSH, Termux, dll)
-```
-
-**Error `Permission denied` di /sys atau /proc?**
-```
-Beberapa path membutuhkan root. Fitur akan tetap berjalan
-tapi menampilkan "—" untuk data yang tidak bisa diakses.
-```
+- ✅ 12 fitur dasar, zero dependency, zero psutil
 
 ---
 
 ## 🤝 Kontribusi
 
-Pull request dan issue sangat welcome!
-
-1. Fork repository ini
-2. Buat branch baru: `git checkout -b fitur-baru`
-3. Commit perubahan: `git commit -m "Tambah fitur X"`
+1. Fork repository
+2. Buat branch: `git checkout -b fitur-baru`
+3. Commit: `git commit -m "Tambah fitur X"`
 4. Push: `git push origin fitur-baru`
 5. Buat Pull Request
 
@@ -289,6 +280,6 @@ MIT License — bebas digunakan, dimodifikasi, dan didistribusikan.
 ---
 
 <div align="center">
-  <b>Dibuat dengan ❤️ untuk komunitas Android Indonesia</b><br>
-  <i>Zero dependency · Pure Python · Baca langsung dari /proc & /sys</i>
+  <b>Dibuat untuk komunitas Android Indonesia 🇮🇩</b><br>
+  <i>v3.0 · Zero dependency · Zero root · Tanpa psutil · Support Android 10+</i>
 </div>

@@ -1,22 +1,18 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║        CEK HARDWARE — VERSI ANDROID v2.0  (Zero Dependency)                 ║
-║   Baca langsung dari /proc & /sys — tanpa psutil, tanpa library eksternal   ║
-║   Jalankan : python3 cek_hardware_android.py                                 ║
-║   GitHub   : https://github.com/                                             ║
+║      CEK HARDWARE ANDROID v3.0  —  ZERO DEPENDENCY                          ║
+║      Support semua versi Android (termasuk Android 10+, 13, 14)             ║
+║      Tanpa root · Tanpa psutil · Tanpa library eksternal                    ║
+║      Jalankan : python3 cek_hardware_android.py                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
-FITUR (18 total):
-  1  · Info CPU           9  · Kecepatan Jaringan Real-time
-  2  · Info RAM           10 · Benchmark CPU (4 tes)
-  3  · Info Storage       11 · Monitor Real-time (live chart)
-  4  · Info Baterai       12 · Laporan Lengkap (Export JSON+TXT)
-  5  · Suhu Hardware      13 · Info GPU (Adreno/Mali/DevFreq)
-  6  · Info Jaringan      14 · WiFi Detail (signal, channel, AP)
-  7  · Info Sistem & OS   15 · Kernel & Modul
-  8  · Proses Aktif       16 · Virtual Memory Stats (/proc/vmstat)
-                          17 · Sensor IIO / Hardware Sensor
-                          18 · Android Lanjut (dumpsys, paket, dll)
+18 FITUR:
+  1  Info CPU          7  Info Sistem & OS    13  Info GPU
+  2  Info RAM          8  Proses Aktif        14  WiFi Detail
+  3  Info Storage      9  Kecepatan Jaringan  15  Kernel & Sistem
+  4  Info Baterai     10  Benchmark CPU       16  Virtual Memory Stats
+  5  Suhu Hardware    11  Monitor Real-time   17  Sensor Hardware
+  6  Info Jaringan    12  Laporan (JSON+TXT)  18  Android Lanjut
 """
 
 import os, sys, time, socket, subprocess, datetime, json, re, platform
@@ -36,10 +32,19 @@ def hdr(title, icon="◉"):
     print(f"{C.BOLD}{C.CYN}{'─'*64}{C.RST}")
 
 def row(label, value, w=30):
-    print(f"    {C.GRY}{label:<{w}}{C.RST}{C.WHT}{value}{C.RST}")
+    print(f"    {C.GRY}{str(label):<{w}}{C.RST}{C.WHT}{value}{C.RST}")
 
 def sec(label):
     print(f"\n    {C.BOLD}{C.YLW}▸ {label}{C.RST}")
+
+def warn(msg):
+    print(f"    {C.YLW}⚠  {msg}{C.RST}")
+
+def info(msg):
+    print(f"    {C.GRY}ℹ  {msg}{C.RST}")
+
+def ok(msg):
+    print(f"    {C.GRN}✓  {msg}{C.RST}")
 
 def bar(pct, width=32):
     pct = max(0.0, min(100.0, float(pct)))
@@ -54,166 +59,240 @@ def b2h(n):
         n /= 1024
     return f"{n:.2f} PB"
 
-def read(path, default=""):
-    try:    return Path(path).read_text().strip()
+def safe_read(path, default=""):
+    """Baca file dengan catch semua error (PermissionError, OSError, dll)."""
+    try:
+        return Path(path).read_text(errors="replace").strip()
+    except Exception:
+        return default
+
+def run_cmd(cmd, timeout=5, default=""):
+    """Jalankan command dengan catch semua error."""
+    try:
+        return subprocess.check_output(
+            cmd, stderr=subprocess.DEVNULL,
+            timeout=timeout).decode(errors="replace").strip()
+    except Exception:
+        return default
+
+def safe_iterdir(path):
+    """Iterasi direktori — return [] jika tidak bisa diakses."""
+    try:
+        return sorted(Path(path).iterdir())
+    except Exception:
+        return []
+
+def getprop(key, default=""):
+    """Baca Android property via getprop."""
+    val = run_cmd(["getprop", key], timeout=3)
+    return val if val and val not in ("[]","") else default
+
+def safe_int(s, default=0):
+    try:    return int(s.strip())
     except: return default
 
-def run(cmd, timeout=5):
-    try:
-        return subprocess.check_output(cmd, stderr=subprocess.DEVNULL,
-               timeout=timeout).decode(errors="replace").strip()
-    except: return ""
+def safe_float(s, default=0.0):
+    try:    return float(s.strip())
+    except: return default
 
-def na(val):
-    """Kembalikan '—' jika kosong."""
-    return val if val else "—"
+# ─── DATA SOURCES ─────────────────────────────────────────────────────────────
+def _parse_meminfo():
+    d = {}
+    for ln in safe_read("/proc/meminfo").split("\n"):
+        if ":" in ln:
+            k, v = ln.split(":", 1)
+            nums = re.findall(r"\d+", v)
+            d[k.strip()] = int(nums[0]) * 1024 if nums else 0
+    return d
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FITUR 1 — CPU (/proc/cpuinfo + /proc/stat)
-# ══════════════════════════════════════════════════════════════════════════════
 def _parse_cpuinfo():
     info = {}
-    try:
-        text = Path("/proc/cpuinfo").read_text()
-        for ln in text.split("\n"):
-            if ":" in ln:
-                k, v = ln.split(":", 1)
-                k = k.strip(); v = v.strip()
-                if k not in info:
-                    info[k] = v
-    except: pass
+    for ln in safe_read("/proc/cpuinfo").split("\n"):
+        if ":" in ln:
+            k, v = ln.split(":", 1)
+            k = k.strip(); v = v.strip()
+            if k not in info:
+                info[k] = v
     return info
-
-def _cpu_usage(interval=1.0):
-    def read_stat():
-        try:
-            line = Path("/proc/stat").read_text().split("\n")[0]
-            vals = list(map(int, line.split()[1:]))
-            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
-            total = sum(vals)
-            return idle, total
-        except: return 0, 1
-    i1, t1 = read_stat(); time.sleep(interval); i2, t2 = read_stat()
-    return 100.0 * (1 - (i2 - i1) / ((t2 - t1) or 1))
-
-def _cpu_freq_mhz():
-    f = read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-    if f.isdigit(): return int(f) / 1000
-    info = _parse_cpuinfo()
-    mhz  = info.get("cpu MHz","")
-    try:   return float(mhz)
-    except: return None
 
 def _n_cores():
     try:
-        return len([l for l in Path("/proc/cpuinfo").read_text().split("\n")
+        return len([l for l in safe_read("/proc/cpuinfo").split("\n")
                     if l.startswith("processor")])
-    except: return 0
+    except: return 1
 
+def _cpu_usage(interval=1.0):
+    """Hitung CPU usage dari /proc/stat (selalu tersedia)."""
+    def read_stat():
+        try:
+            line = safe_read("/proc/stat").split("\n")[0]
+            vals = list(map(int, line.split()[1:]))
+            idle  = vals[3] + (vals[4] if len(vals) > 4 else 0)
+            total = sum(vals)
+            return idle, total
+        except: return 0, 1
+    i1, t1 = read_stat()
+    time.sleep(interval)
+    i2, t2 = read_stat()
+    return 100.0 * (1 - (i2 - i1) / ((t2 - t1) or 1))
+
+# ─── NET STATS (compatible Android 10+) ───────────────────────────────────────
+def _net_iface_stats():
+    """
+    Baca statistik jaringan dari /sys/class/net/*/statistics/ —
+    pengganti /proc/net/dev yang diblokir di Android 10+.
+    """
+    result = {}
+    for iface_dir in safe_iterdir("/sys/class/net"):
+        iface = iface_dir.name
+        stats_dir = iface_dir / "statistics"
+        if not stats_dir.exists():
+            continue
+        try:
+            result[iface] = {
+                "rx_bytes":   safe_int(safe_read(stats_dir/"rx_bytes")),
+                "tx_bytes":   safe_int(safe_read(stats_dir/"tx_bytes")),
+                "rx_packets": safe_int(safe_read(stats_dir/"rx_packets")),
+                "tx_packets": safe_int(safe_read(stats_dir/"tx_packets")),
+                "rx_errors":  safe_int(safe_read(stats_dir/"rx_errors")),
+                "tx_errors":  safe_int(safe_read(stats_dir/"tx_errors")),
+                "rx_dropped": safe_int(safe_read(stats_dir/"rx_dropped")),
+                "tx_dropped": safe_int(safe_read(stats_dir/"tx_dropped")),
+            }
+        except Exception:
+            continue
+    return result
+
+def _get_ip_for(iface):
+    """Dapatkan IP dari nama interface."""
+    try:
+        import fcntl, struct
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(), 0x8915,
+            struct.pack("256s", iface[:15].encode()))[20:24])
+    except Exception:
+        return ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FITUR 1 — CPU
+# ══════════════════════════════════════════════════════════════════════════════
 def fitur_cpu():
     hdr("FITUR 1 · INFO CPU", "🖥️")
     info    = _parse_cpuinfo()
     n_cores = _n_cores()
 
-    row("Model CPU",       na(info.get("model name", info.get("Hardware",""))))
-    row("Implementasi",    na(info.get("CPU implementer","")))
-    row("Arsitektur",      na(info.get("CPU architecture", platform.machine())))
-    row("Varian",          na(info.get("CPU variant","")))
-    row("Part",            na(info.get("CPU part","")))
-    row("Revision",        na(info.get("CPU revision","")))
-    row("Jumlah Core",     n_cores or "?")
-    row("BogoMIPS",        na(info.get("BogoMIPS","")))
-    row("Fitur CPU",       (info.get("Features","—"))[:60])
+    # Model — beberapa device taruh di Hardware, bukan model name
+    model = (info.get("model name") or info.get("Hardware") or
+             getprop("ro.hardware") or getprop("ro.board.platform") or "?")
+    row("Model / Hardware",  model[:60])
+    row("Arsitektur",        info.get("CPU architecture", platform.machine()))
+    row("Implementasi",      info.get("CPU implementer", "—"))
+    row("Varian / Part",     f"{info.get('CPU variant','—')} / {info.get('CPU part','—')}")
+    row("Jumlah Core",       n_cores or "?")
+    row("BogoMIPS",          info.get("BogoMIPS", "—"))
 
-    freq = _cpu_freq_mhz()
-    if freq: row("Frekuensi Saat Ini", f"{freq:.0f} MHz  ({freq/1000:.2f} GHz)")
+    fitur_list = info.get("Features", "")
+    if fitur_list:
+        row("Fitur CPU", fitur_list[:64])
 
-    fmax = read("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
-    fmin = read("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
-    if fmax.isdigit(): row("Frekuensi Maks", f"{int(fmax)//1000} MHz")
-    if fmin.isdigit(): row("Frekuensi Min",  f"{int(fmin)//1000} MHz")
+    # Frekuensi — beberapa path mungkin blocked, coba semuanya
+    sec("Frekuensi CPU:")
+    for path, label in [
+        ("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "Saat Ini"),
+        ("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",  "Maksimum"),
+        ("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq",  "Minimum"),
+    ]:
+        val = safe_read(path)
+        if val and val.isdigit():
+            mhz = int(val) / 1000
+            row(label, f"{mhz:.0f} MHz  ({mhz/1000:.2f} GHz)")
+        else:
+            # Fallback ke cpuinfo
+            if label == "Saat Ini":
+                mhz_s = info.get("cpu MHz", "")
+                if mhz_s:
+                    row(label, f"{safe_float(mhz_s):.0f} MHz")
+                else:
+                    row(label, "Tidak tersedia")
 
-    gov = read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    gov = safe_read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
     if gov: row("Governor", gov)
 
-    sec("Load Average:")
-    la = read("/proc/loadavg").split()
-    if la: row("1 / 5 / 15 menit", f"{la[0]}  {la[1]}  {la[2]}")
+    # Per-core freq
+    sec("Frekuensi Per Core:")
+    any_core = False
+    for i in range(min(n_cores or 0, 8)):
+        f = safe_read(f"/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq")
+        if f and f.isdigit():
+            row(f"Core {i}", f"{int(f)//1000} MHz")
+            any_core = True
+    if not any_core:
+        info("Frekuensi per-core tidak tersedia (perlu akses lebih di Android 10+)")
 
-    sec("Penggunaan CPU (diukur 1 detik):")
-    print(f"    {C.GRY}Mengukur...{C.RST}", end="", flush=True)
+    # Load average
+    sec("Load Average & Penggunaan:")
+    la = safe_read("/proc/loadavg").split()
+    if la: row("Load Avg (1/5/15 menit)", f"{la[0]}  {la[1]}  {la[2]}")
+
+    print(f"\n    {C.GRY}Mengukur penggunaan CPU 1 detik...{C.RST}", end="", flush=True)
     usage = _cpu_usage(1.0)
-    print(f"\r{' '*22}\r", end="")
+    print(f"\r{' '*40}\r", end="")
     print(f"    {bar(usage)}")
 
-    sec("Frekuensi Per Core:")
-    for i in range(min(n_cores or 0, 8)):
-        f = read(f"/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq")
-        if f.isdigit():
-            mhz = int(f) / 1000
-            max_f = read(f"/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq")
-            max_mhz = f"/ maks {int(max_f)//1000} MHz" if max_f.isdigit() else ""
-            print(f"    Core {i}  {mhz:.0f} MHz  {max_mhz}")
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 2 — RAM (/proc/meminfo)
+# FITUR 2 — RAM
 # ══════════════════════════════════════════════════════════════════════════════
-def _parse_meminfo():
-    d = {}
-    try:
-        for ln in Path("/proc/meminfo").read_text().split("\n"):
-            if ":" in ln:
-                k, v = ln.split(":", 1)
-                nums = re.findall(r"\d+", v)
-                d[k.strip()] = int(nums[0]) * 1024 if nums else 0
-    except: pass
-    return d
-
 def fitur_ram():
     hdr("FITUR 2 · INFO RAM / MEMORI", "💾")
     m = _parse_meminfo()
     if not m:
-        print(f"    {C.YLW}⚠  /proc/meminfo tidak bisa dibaca.{C.RST}"); return
+        warn("/proc/meminfo tidak bisa dibaca."); return
 
-    total     = m.get("MemTotal", 0)
-    free      = m.get("MemFree",  0)
-    avail     = m.get("MemAvailable", free)
-    buffers   = m.get("Buffers", 0)
-    cached    = m.get("Cached",  0) + m.get("SReclaimable", 0)
-    used      = total - free - buffers - cached
-    swap_tot  = m.get("SwapTotal", 0)
-    swap_free = m.get("SwapFree",  0)
-    swap_used = swap_tot - swap_free
-    pct       = (used / total * 100) if total else 0
+    total    = m.get("MemTotal", 0)
+    free     = m.get("MemFree",  0)
+    avail    = m.get("MemAvailable", free)
+    buffers  = m.get("Buffers", 0)
+    cached   = m.get("Cached",  0) + m.get("SReclaimable", 0)
+    used     = total - free - buffers - cached
+    pct      = (max(used,0) / total * 100) if total else 0
+    swap_tot = m.get("SwapTotal", 0)
+    swap_use = swap_tot - m.get("SwapFree", swap_tot)
 
-    row("Total RAM",      b2h(total))
-    row("Terpakai",       b2h(max(used, 0)))
-    row("Tersedia",       b2h(avail))
-    row("Bebas (murni)",  b2h(free))
-    row("Buffer",         b2h(buffers))
-    row("Cache",          b2h(cached))
-    row("Active",         b2h(m.get("Active", 0)))
-    row("Inactive",       b2h(m.get("Inactive", 0)))
+    row("Total RAM",     b2h(total))
+    row("Terpakai",      b2h(max(used, 0)))
+    row("Tersedia",      b2h(avail))
+    row("Bebas (murni)", b2h(free))
+    row("Buffer",        b2h(buffers))
+    row("Cache",         b2h(cached))
+    row("Active",        b2h(m.get("Active",   0)))
+    row("Inactive",      b2h(m.get("Inactive", 0)))
     print(f"\n    {bar(pct)}")
 
-    sec("SWAP:")
-    row("Total SWAP",     b2h(swap_tot))
-    row("Terpakai",       b2h(swap_used))
-    row("Bebas",          b2h(swap_free))
+    sec("SWAP / zRAM:")
     if swap_tot:
-        print(f"    {bar(swap_used / swap_tot * 100)}")
+        row("Total",    b2h(swap_tot))
+        row("Terpakai", b2h(swap_use))
+        row("Bebas",    b2h(swap_tot - swap_use))
+        print(f"    {bar(swap_use / swap_tot * 100 if swap_tot else 0)}")
     else:
-        print(f"    {C.GRY}Tidak ada SWAP.{C.RST}")
+        info("Tidak ada SWAP / zRAM aktif.")
 
-    for key in ("HugePages_Total","Hugepagesize","DirectMap4k","DirectMap2M"):
-        if key in m:
-            row(key, b2h(m[key]) if "size" in key.lower() or "map" in key.lower() else str(m[key]//1024))
+    # zRAM device
+    for zram in safe_iterdir("/sys/block"):
+        if not zram.name.startswith("zram"): continue
+        mm_s   = safe_read(zram/"mm_stat")
+        orig   = safe_int(mm_s.split()[0] if mm_s else "0")
+        compr  = safe_int(mm_s.split()[1] if mm_s and len(mm_s.split())>1 else "0")
+        if orig:
+            ratio = orig / compr if compr else 0
+            row(f"zRAM ({zram.name})", f"orig {b2h(orig)} → compr {b2h(compr)}  ratio {ratio:.1f}x")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 3 — STORAGE (/proc/mounts + /proc/diskstats)
+# FITUR 3 — STORAGE
 # ══════════════════════════════════════════════════════════════════════════════
 def _statvfs(path):
     try:
@@ -226,223 +305,268 @@ def _statvfs(path):
         return total, used, avail, pct
     except: return None
 
+SKIP_FS = {"tmpfs","proc","sysfs","devtmpfs","cgroup","cgroup2","pstore",
+           "devpts","debugfs","securityfs","configfs","hugetlbfs","mqueue",
+           "fusectl","bpf","tracefs","none","overlay","rootfs"}
+
 def fitur_storage():
     hdr("FITUR 3 · INFO STORAGE / PENYIMPANAN", "💿")
-    mounts = read("/proc/mounts")
-    seen   = set()
-    for ln in mounts.split("\n"):
+    mounts_raw = safe_read("/proc/mounts")
+    seen = set()
+
+    if not mounts_raw:
+        # Fallback: df
+        df_out = run_cmd(["df","-h"], timeout=5)
+        if df_out:
+            sec("Dari perintah df:")
+            for ln in df_out.split("\n"):
+                print(f"    {C.WHT}{ln}{C.RST}")
+        else:
+            warn("Tidak bisa membaca info storage.")
+        return
+
+    for ln in mounts_raw.split("\n"):
         parts = ln.split()
         if len(parts) < 3: continue
         dev, mpt, fs = parts[0], parts[1], parts[2]
-        if fs in ("tmpfs","proc","sysfs","devtmpfs","cgroup","cgroup2",
-                  "pstore","devpts","debugfs","securityfs","configfs",
-                  "hugetlbfs","mqueue","fusectl","bpf","tracefs","none"): continue
-        if mpt in seen: continue
+        if fs in SKIP_FS: continue
+        if mpt in seen:  continue
         seen.add(mpt)
         res = _statvfs(mpt)
         if not res: continue
         total, used, avail, pct = res
-        if total < 1024 * 1024: continue
+        if total < 1024 * 1024: continue   # skip yg sangat kecil
         sec(f"{dev}  →  {mpt}  [{fs}]")
         row("Total",    b2h(total))
         row("Terpakai", b2h(used))
         row("Tersedia", b2h(avail))
         print(f"    {bar(pct)}")
 
-    sec("Aktivitas Disk I/O (/proc/diskstats):")
-    ds = read("/proc/diskstats")
-    printed = False
-    for ln in ds.split("\n"):
-        parts = ln.split()
-        if len(parts) < 14: continue
-        name = parts[2]
-        if re.match(r"^(sd[a-z]|mmcblk\d|nvme\d|vd[a-z])$", name):
-            r_sec  = int(parts[5])  * 512
-            w_sec  = int(parts[9])  * 512
-            r_ms   = int(parts[6])
-            w_ms   = int(parts[10])
-            print(f"    {C.BOLD}{name}{C.RST}  "
-                  f"Baca:{b2h(r_sec)}  Tulis:{b2h(w_sec)}  "
-                  f"T-Baca:{r_ms}ms  T-Tulis:{w_ms}ms")
-            printed = True
-    if not printed:
-        print(f"    {C.GRY}Tidak ada data /proc/diskstats.{C.RST}")
+    # /proc/diskstats — blocked di Android 10+, gunakan df sebagai pelengkap
+    sec("Ringkasan df -h:")
+    df_out = run_cmd(["df", "-h"], timeout=5)
+    if df_out:
+        lines = df_out.split("\n")
+        print(f"    {C.GRY}{lines[0]}{C.RST}")  # header
+        for ln in lines[1:]:
+            parts = ln.split()
+            if len(parts) < 5: continue
+            # Tampilkan hanya yg signifikan (bukan tmpfs kecil)
+            try:
+                pct_str = [p for p in parts if p.endswith("%")]
+                if pct_str: print(f"    {C.WHT}{ln}{C.RST}")
+            except: pass
+    else:
+        info("/proc/diskstats & df tidak tersedia di perangkat ini.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 4 — BATERAI (/sys/class/power_supply)
+# FITUR 4 — BATERAI
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_baterai():
     hdr("FITUR 4 · INFO BATERAI", "🔋")
     base = Path("/sys/class/power_supply")
-    if not base.exists():
-        print(f"    {C.YLW}⚠  /sys/class/power_supply tidak tersedia.{C.RST}"); return
-
     found = False
-    for supply in sorted(base.iterdir()):
-        stype = read(supply / "type")
+
+    for supply in safe_iterdir(base):
+        stype = safe_read(supply / "type")
         if stype not in ("Battery","USB","Mains") and "bat" not in supply.name.lower():
             continue
 
         sec(f"Supply: {supply.name}  [{stype}]")
         found = True
 
-        cap = read(supply / "capacity")
-        if cap.isdigit():
+        # Kapasitas
+        cap = safe_read(supply / "capacity")
+        if cap and cap.isdigit():
             pct = float(cap)
-            row("Persentase",  f"{pct:.0f}%")
+            row("Persentase", f"{pct:.0f}%")
             print(f"\n    {bar(pct)}\n")
 
-        status = read(supply / "status")
+        # Status
+        status = safe_read(supply / "status")
         if status:
             col = C.GRN if status == "Charging" else C.YLW if status == "Discharging" else C.GRY
-            row("Status",      f"{col}{status}{C.RST}")
+            row("Status", f"{col}{status}{C.RST}")
 
-        for fname, label in [
-            ("voltage_now",        "Tegangan (µV)"),
-            ("voltage_max_design", "Tegangan Desain (µV)"),
-            ("current_now",        "Arus Sekarang (µA)"),
-            ("charge_now",         "Charge Sekarang (µAh)"),
-            ("charge_full",        "Charge Penuh (µAh)"),
-            ("charge_full_design", "Charge Desain (µAh)"),
-            ("energy_now",         "Energi Sekarang (µWh)"),
-            ("energy_full",        "Energi Penuh (µWh)"),
-            ("energy_full_design", "Energi Desain (µWh)"),
-            ("cycle_count",        "Siklus Charge"),
-            ("health",             "Kondisi"),
-            ("technology",         "Teknologi"),
-            ("manufacturer",       "Produsen"),
-            ("model_name",         "Model"),
-            ("serial_number",      "Serial"),
-            ("temp",               "Suhu Baterai"),
-        ]:
-            val = read(supply / fname)
-            if val:
-                if fname == "temp" and val.lstrip("-").isdigit():
+        # Fields teknis — masing-masing di-try sendiri
+        fields = [
+            ("technology",         "Teknologi",            ""),
+            ("health",             "Kondisi (Health)",     ""),
+            ("temp",               "Suhu",                 "temp"),
+            ("voltage_now",        "Tegangan",             "voltage"),
+            ("voltage_max_design", "Tegangan Desain",      "voltage"),
+            ("current_now",        "Arus Saat Ini",        "current"),
+            ("charge_now",         "Charge Saat Ini",      "charge"),
+            ("charge_full",        "Charge Penuh",         "charge"),
+            ("charge_full_design", "Charge Desain",        "charge"),
+            ("energy_now",         "Energi Saat Ini",      "energy"),
+            ("energy_full",        "Energi Penuh",         "energy"),
+            ("cycle_count",        "Siklus Charge",        ""),
+            ("manufacturer",       "Produsen",             ""),
+            ("model_name",         "Model",                ""),
+        ]
+        for fname, label, ftype in fields:
+            val = safe_read(supply / fname)
+            if not val: continue
+            try:
+                if ftype == "temp" and val.lstrip("-").isdigit():
                     val = f"{int(val)/10:.1f}°C"
-                elif fname in ("charge_full","charge_now") and val.isdigit():
-                    val = f"{int(val)//1000} mAh ({val} µAh)"
-                elif fname in ("energy_now","energy_full") and val.isdigit():
+                elif ftype == "voltage" and val.lstrip("-").isdigit():
+                    v_uv = int(val)
+                    val = f"{v_uv/1_000_000:.3f} V"
+                elif ftype == "current" and val.lstrip("-").isdigit():
+                    c_ua = int(val)
+                    val = f"{abs(c_ua)/1000:.0f} mA  ({'Keluar' if c_ua < 0 else 'Masuk'})"
+                elif ftype == "charge" and val.isdigit():
+                    val = f"{int(val)//1000} mAh"
+                elif ftype == "energy" and val.isdigit():
                     val = f"{int(val)//1000} mWh"
-                elif fname in ("voltage_now","voltage_max_design") and val.lstrip("-").isdigit():
-                    val = f"{int(val)/1000000:.3f} V  ({val} µV)"
-                row(label, val)
+            except Exception: pass
+            row(label, val)
 
-        cf = read(supply / "charge_full")
-        cn = read(supply / "charge_now")
+        # Health calculation
+        cf = safe_read(supply / "charge_full"); cn = safe_read(supply / "charge_now")
         if cf.isdigit() and cn.isdigit() and int(cf):
-            health_pct = int(cn) / int(cf) * 100
-            row("Health Baterai", f"{health_pct:.1f}%")
+            hp = int(cn)/int(cf)*100
+            col = C.GRN if hp>80 else C.YLW if hp>60 else C.RED
+            row("Health Baterai", f"{col}{hp:.1f}%{C.RST}")
 
+    # Fallback: dumpsys battery
     if not found:
-        print(f"    {C.GRY}Tidak ada supply baterai terdeteksi.{C.RST}")
+        sec("Fallback — dumpsys battery:")
+        out = run_cmd(["dumpsys","battery"], timeout=6)
+        if out:
+            for ln in out.split("\n"):
+                if ":" in ln and ln.strip():
+                    k, _, v = ln.partition(":")
+                    row(k.strip()[:28], v.strip())
+            found = True
+        else:
+            warn("Tidak ada data baterai yang tersedia.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 5 — SUHU (/sys/class/thermal)
+# FITUR 5 — SUHU HARDWARE
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_suhu():
     hdr("FITUR 5 · SUHU HARDWARE", "🌡️")
-    thermal = Path("/sys/class/thermal")
-    if not thermal.exists():
-        print(f"    {C.YLW}⚠  /sys/class/thermal tidak tersedia.{C.RST}"); return
-
     found = False
-    for zone in sorted(thermal.iterdir()):
-        temp_f = zone / "temp"
-        type_f = zone / "type"
-        if not temp_f.exists(): continue
+
+    # /sys/class/thermal
+    for zone in safe_iterdir("/sys/class/thermal"):
+        temp_path = zone / "temp"
+        type_path = zone / "type"
+        if not temp_path.exists(): continue
+        val = safe_read(temp_path)
+        if not val or not val.lstrip("-").isdigit(): continue
         try:
-            temp_raw  = int(read(temp_f))
-            zone_type = read(type_f) or zone.name
-            temp_c    = temp_raw / 1000 if temp_raw > 200 else float(temp_raw)
+            temp_raw  = int(val)
+            zone_type = safe_read(type_path) or zone.name
+            temp_c    = temp_raw / 1000 if abs(temp_raw) > 200 else float(temp_raw)
+            if abs(temp_c) < 1 or abs(temp_c) > 150: continue   # filter nilai aneh
             st = (f"{C.RED}⚠ KRITIS{C.RST}" if temp_c >= 80
                   else f"{C.YLW}⚡ Panas{C.RST}" if temp_c >= 55
                   else f"{C.GRN}✓ Normal{C.RST}")
-            print(f"    {zone_type:<30} {C.BOLD}{temp_c:>6.1f}°C{C.RST}  [{st}]")
+            print(f"    {zone_type:<32} {C.BOLD}{temp_c:>6.1f}°C{C.RST}  [{st}]")
             found = True
-        except: pass
+        except Exception: continue
 
+    # /sys/class/hwmon
+    for hw in safe_iterdir("/sys/class/hwmon"):
+        name = safe_read(hw/"name") or hw.name
+        for tf in hw.glob("temp*_input") if hw.is_dir() else []:
+            try:
+                t = safe_int(safe_read(tf)) / 1000
+                if abs(t) < 1 or abs(t) > 150: continue
+                lf = hw / tf.name.replace("input","label")
+                label = safe_read(lf) or tf.name
+                print(f"    {name}/{label:<28} {t:>6.1f}°C")
+                found = True
+            except Exception: continue
+
+    # Fallback: getprop suhu
     if not found:
-        print(f"    {C.GRY}Tidak ada sensor thermal terdeteksi.{C.RST}")
+        sec("Fallback via getprop:")
+        for key in ["ro.thermal.degree","sys.thermal.data","thermal.degree"]:
+            val = getprop(key)
+            if val: row(key, val); found = True
+        if not found:
+            warn("Sensor suhu tidak bisa diakses. Normal di Android 10+ tanpa root.")
+            info("Coba: Pengaturan → Baterai → Info tambahan (tergantung HP)")
 
-    hwmon = Path("/sys/class/hwmon")
-    if hwmon.exists():
-        sec("hwmon sensors:")
-        for hw in sorted(hwmon.iterdir()):
-            name = read(hw / "name") or hw.name
-            for tf in sorted(hw.glob("temp*_input")):
-                try:
-                    t = int(read(tf)) / 1000
-                    label_f = hw / tf.name.replace("input","label")
-                    label   = read(label_f) or tf.name
-                    print(f"    {name}/{label:<26} {t:>6.1f}°C")
-                except: pass
+    # Suhu baterai dari power_supply (biasanya tersedia)
+    sec("Suhu Baterai (dari power_supply):")
+    bat_found = False
+    for supply in safe_iterdir("/sys/class/power_supply"):
+        val = safe_read(supply/"temp")
+        if val and val.lstrip("-").isdigit():
+            temp_c = int(val) / 10
+            row(f"  {supply.name}", f"{temp_c:.1f}°C")
+            bat_found = True
+    if not bat_found:
+        info("Suhu baterai tidak tersedia via /sys/class/power_supply")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 6 — JARINGAN (/proc/net/dev)
+# FITUR 6 — JARINGAN
 # ══════════════════════════════════════════════════════════════════════════════
-def _parse_net_dev():
-    result = {}
-    try:
-        lines = Path("/proc/net/dev").read_text().split("\n")[2:]
-        for ln in lines:
-            if ":" not in ln: continue
-            iface, data = ln.split(":", 1)
-            vals = data.split()
-            if len(vals) >= 16:
-                result[iface.strip()] = {
-                    "rx_bytes":   int(vals[0]),  "rx_packets": int(vals[1]),
-                    "rx_errs":    int(vals[2]),  "rx_drop":    int(vals[3]),
-                    "tx_bytes":   int(vals[8]),  "tx_packets": int(vals[9]),
-                    "tx_errs":    int(vals[10]), "tx_drop":    int(vals[11]),
-                }
-    except: pass
-    return result
-
-def _get_ip(iface):
-    try:
-        import fcntl, struct
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(
-            s.fileno(), 0x8915,
-            struct.pack("256s", iface[:15].encode()))[20:24])
-    except: return ""
-
 def fitur_network():
     hdr("FITUR 6 · INFO JARINGAN", "🌐")
 
+    # Hostname & IP
     try:
         hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        row("Hostname",  hostname)
-        row("IP Lokal",  local_ip)
-    except: pass
+        row("Hostname", hostname)
+        try:
+            local_ip = socket.gethostbyname(hostname)
+            row("IP Lokal (hostname)", local_ip)
+        except Exception: pass
+    except Exception: pass
 
+    # IP Publik
     try:
         import urllib.request
-        pub = urllib.request.urlopen("https://api.ipify.org", timeout=5).read().decode()
+        pub = urllib.request.urlopen("https://api.ipify.org", timeout=5).read().decode().strip()
         row("IP Publik", pub)
-    except:
-        row("IP Publik", "Timeout / tidak tersambung")
+    except Exception:
+        row("IP Publik", "Tidak tersambung / timeout")
 
-    net = _parse_net_dev()
+    # Interface stats dari /sys/class/net/*/statistics/ (Android 10+ compatible)
     sec("Interface Jaringan:")
-    for iface, d in sorted(net.items()):
-        if d["rx_bytes"] == 0 and d["tx_bytes"] == 0: continue
-        ip   = _get_ip(iface)
-        oper = read(f"/sys/class/net/{iface}/operstate")
-        col  = C.GRN if oper == "up" else C.RED
-        spd  = read(f"/sys/class/net/{iface}/speed")
-        spd_str = f"  {spd} Mbps" if spd and spd not in ("-1","") else ""
-        print(f"\n    {C.BOLD}{iface}{C.RST}  [{col}{oper or '?'}{C.RST}]{spd_str}")
-        if ip: row("  IP",        ip)
-        mac = read(f"/sys/class/net/{iface}/address")
-        if mac: row("  MAC",      mac)
-        row("  ⬇ Diterima", f"{b2h(d['rx_bytes'])}  ({d['rx_packets']:,} paket, {d['rx_errs']} err)")
-        row("  ⬆ Dikirim",  f"{b2h(d['tx_bytes'])}  ({d['tx_packets']:,} paket, {d['tx_errs']} err)")
+    net = _net_iface_stats()
+    if net:
+        for iface, d in sorted(net.items()):
+            oper  = safe_read(f"/sys/class/net/{iface}/operstate") or "?"
+            col   = C.GRN if oper == "up" else C.RED
+            mtu   = safe_read(f"/sys/class/net/{iface}/mtu")
+            spd   = safe_read(f"/sys/class/net/{iface}/speed")
+            spd_s = f"  {spd} Mbps" if spd and spd not in ("-1","","4294967295") else ""
 
+            # Skip interface yg benar-benar tidak aktif
+            if d["rx_bytes"] == 0 and d["tx_bytes"] == 0 and oper != "up":
+                continue
+
+            print(f"\n    {C.BOLD}{iface}{C.RST}  [{col}{oper}{C.RST}]{spd_s}")
+
+            # IP
+            ip = _get_ip_for(iface)
+            if ip and not ip.startswith("0."): row("  IP", ip)
+
+            # MAC — di Android 10+ sering di-randomize
+            mac = safe_read(f"/sys/class/net/{iface}/address")
+            if mac and mac not in ("00:00:00:00:00:00","02:00:00:00:00:00",""):
+                row("  MAC", mac)
+            else:
+                row("  MAC", "(tersembunyi — privasi Android 10+)")
+
+            if mtu: row("  MTU", mtu)
+            row("  ⬇ Diterima", f"{b2h(d['rx_bytes'])}  ({d['rx_packets']:,} paket)")
+            row("  ⬆ Dikirim",  f"{b2h(d['tx_bytes'])}  ({d['tx_packets']:,} paket)")
+    else:
+        info("Statistik interface tidak tersedia via /sys/class/net/*/statistics/")
+
+    # Latensi TCP
     sec("Latensi TCP:")
     targets = [("Google DNS","8.8.8.8",53),("Cloudflare","1.1.1.1",53),
                ("Google","google.com",443),("GitHub","github.com",443)]
@@ -453,183 +577,204 @@ def fitur_network():
             ms = (time.perf_counter() - t0) * 1000
             q  = C.GRN if ms < 80 else C.YLW if ms < 200 else C.RED
             print(f"    {C.GRN}✓{C.RST}  {name:<22} {q}{ms:>7.1f} ms{C.RST}")
-        except:
-            print(f"    {C.RED}✗{C.RST}  {name:<22} {C.RED}Gagal{C.RST}")
+        except Exception:
+            print(f"    {C.RED}✗{C.RST}  {name:<22} {C.RED}Tidak terjangkau{C.RST}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FITUR 7 — INFO SISTEM & OS
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_os():
-    hdr("FITUR 7 · INFO SISTEM OPERASI", "📱")
+    hdr("FITUR 7 · INFO SISTEM & OS ANDROID", "📱")
     uname = platform.uname()
     row("Sistem",        uname.system)
-    row("Node",          uname.node)
     row("Kernel",        uname.release)
-    row("Versi Kernel",  uname.version[:72])
-    row("Mesin",         uname.machine)
+    row("Arsitektur",    uname.machine)
     row("Python",        platform.python_version())
 
-    sec("Android Properties (getprop):")
-    props = {
-        "ro.product.brand":         "Brand",
-        "ro.product.model":         "Model HP",
-        "ro.product.name":          "Nama Produk",
-        "ro.product.device":        "Device",
-        "ro.build.version.release": "Android Version",
-        "ro.build.version.sdk":     "SDK Level",
-        "ro.build.id":              "Build ID",
-        "ro.build.type":            "Build Type",
-        "ro.build.date":            "Tanggal Build",
-        "ro.build.fingerprint":     "Fingerprint",
-        "ro.product.cpu.abi":       "CPU ABI",
-        "ro.product.cpu.abilist":   "ABI List",
-        "ro.hardware":              "Hardware",
-        "ro.board.platform":        "Platform Board",
-        "ro.product.manufacturer":  "Produsen",
-        "ro.serialno":              "Serial Number",
-    }
-    any_prop = False
-    for key, label in props.items():
-        val = run(["getprop", key])
-        if val:
-            row(label, val[:70])
-            any_prop = True
-    if not any_prop:
-        print(f"    {C.GRY}getprop tidak tersedia (bukan Android / tidak ada akses){C.RST}")
-
-    if Path("/etc/os-release").exists():
-        sec("OS Release:")
-        for ln in Path("/etc/os-release").read_text().split("\n"):
-            if "=" in ln:
-                k, v = ln.split("=", 1)
-                if k in ("PRETTY_NAME","NAME","VERSION","ID"):
-                    row(k, v.strip('"'))
-
-    sec("Uptime:")
-    up_raw = read("/proc/uptime").split()
+    # Uptime
+    up_raw = safe_read("/proc/uptime").split()
     if up_raw:
-        up_s = float(up_raw[0])
+        up_s = safe_float(up_raw[0])
         h, r = divmod(int(up_s), 3600); m, s = divmod(r, 60)
         row("Uptime", f"{h} jam  {m} menit  {s} detik")
-    if len(up_raw) > 1:
-        idle_s = float(up_raw[1])
-        row("CPU Idle Total", f"{idle_s/3600:.1f} jam (akumulasi semua core)")
+
+    # Android props via getprop — paling reliable di Termux
+    sec("Info Perangkat Android:")
+    props_device = [
+        ("ro.product.brand",         "Brand"),
+        ("ro.product.manufacturer",  "Produsen"),
+        ("ro.product.model",         "Model"),
+        ("ro.product.name",          "Nama Produk"),
+        ("ro.product.device",        "Kode Device"),
+        ("ro.product.board",         "Board"),
+        ("ro.hardware",              "Hardware"),
+        ("ro.board.platform",        "Platform"),
+        ("ro.product.cpu.abi",       "CPU ABI"),
+        ("ro.product.cpu.abilist",   "ABI List"),
+    ]
+    for key, label in props_device:
+        val = getprop(key)
+        if val: row(label, val[:64])
+
+    sec("Info Android OS:")
+    props_os = [
+        ("ro.build.version.release", "Android Version"),
+        ("ro.build.version.sdk",     "SDK Level"),
+        ("ro.build.version.security_patch", "Security Patch"),
+        ("ro.build.id",              "Build ID"),
+        ("ro.build.type",            "Build Type"),
+        ("ro.build.date",            "Tanggal Build"),
+        ("ro.build.flavor",          "Build Flavor"),
+        ("ro.build.fingerprint",     "Fingerprint"),
+    ]
+    for key, label in props_os:
+        val = getprop(key)
+        if val: row(label, val[:70])
+
+    sec("Info Tambahan:")
+    props_extra = [
+        ("ro.serialno",              "Serial Number"),
+        ("ro.boot.hardware",         "Boot Hardware"),
+        ("ro.secure",                "Secure Boot"),
+        ("ro.debuggable",            "Debuggable"),
+        ("ro.adb.secure",            "ADB Secure"),
+        ("persist.sys.timezone",     "Timezone"),
+        ("persist.sys.language",     "Bahasa"),
+        ("ro.sf.lcd_density",        "LCD Density (dpi)"),
+        ("ro.opengles.version",      "OpenGL ES Version"),
+    ]
+    for key, label in props_extra:
+        val = getprop(key)
+        if val: row(label, val[:60])
+
+    # /etc/os-release (Termux)
+    osr = safe_read("/etc/os-release")
+    if osr:
+        sec("OS Release:")
+        for ln in osr.split("\n"):
+            if "=" in ln:
+                k, v = ln.split("=", 1)
+                if k in ("PRETTY_NAME","NAME","VERSION"):
+                    row(k, v.strip('"'))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 8 — PROSES AKTIF (/proc)
+# FITUR 8 — PROSES AKTIF
 # ══════════════════════════════════════════════════════════════════════════════
-def _cpu_times_proc(pid):
-    try:
-        parts = Path(f"/proc/{pid}/stat").read_text().split()
-        return int(parts[13]) + int(parts[14])
-    except: return 0
-
 def fitur_proses():
-    hdr("FITUR 8 · PROSES AKTIF (TOP 15 CPU)", "⚙️")
-    m = _parse_meminfo()
-    total_mem = m.get("MemTotal", 1)
-    clk = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    hdr("FITUR 8 · PROSES AKTIF", "⚙️")
 
-    snap1 = {}
-    for pid_dir in Path("/proc").iterdir():
-        if not pid_dir.name.isdigit(): continue
-        snap1[pid_dir.name] = _cpu_times_proc(pid_dir.name)
+    # Android 10+: /proc/<pid> hanya bisa dibaca untuk proses sendiri
+    # Gunakan 'top' atau 'ps' sebagai sumber utama
+    sec("Top Proses (via top / ps):")
 
-    print(f"    {C.GRY}Mengukur 1 detik...{C.RST}", end="", flush=True)
-    time.sleep(1)
-    print(f"\r{' '*25}\r", end="")
+    # Coba top dulu
+    top_out = run_cmd(["top", "-n", "1", "-b"], timeout=8)
+    if not top_out:
+        top_out = run_cmd(["top", "-n", "1"], timeout=8)
 
-    hasil = []
-    for pid_dir in Path("/proc").iterdir():
-        if not pid_dir.name.isdigit(): continue
-        pid = pid_dir.name
-        t2  = _cpu_times_proc(pid)
-        t1  = snap1.get(pid, t2)
-        cpu_pct = (t2 - t1) / clk * 100
+    if top_out:
+        lines = top_out.split("\n")
+        printed = 0
+        header_found = False
+        for ln in lines:
+            if any(kw in ln.upper() for kw in ["PID","CPU","MEM","COMMAND","%CPU"]):
+                header_found = True
+                print(f"    {C.BOLD}{ln}{C.RST}")
+                continue
+            if header_found and ln.strip() and printed < 15:
+                print(f"    {C.WHT}{ln}{C.RST}")
+                printed += 1
+    else:
+        # Fallback: ps
+        ps_out = run_cmd(["ps", "-A"], timeout=6)
+        if not ps_out:
+            ps_out = run_cmd(["ps"], timeout=6)
+        if ps_out:
+            lines = ps_out.split("\n")
+            print(f"    {C.BOLD}{lines[0] if lines else ''}{C.RST}")
+            for ln in lines[1:16]:
+                if ln.strip():
+                    print(f"    {C.WHT}{ln}{C.RST}")
+        else:
+            warn("top/ps tidak tersedia di perangkat ini.")
+            info("Di Android 10+, akses /proc/<pid> dibatasi untuk proses lain.")
 
-        try:   name = (pid_dir/"comm").read_text().strip()
-        except: name = "?"
+    # Info proses dari /proc yang bisa diakses
+    sec("Statistik Sistem:")
+    all_pids = [d for d in safe_iterdir("/proc") if d.name.isdigit()]
+    row("PID yang terlihat", len(all_pids))
 
-        mem_kb = 0
-        try:
-            for ln in (pid_dir/"status").read_text().split("\n"):
-                if ln.startswith("VmRSS:"):
-                    nums = re.findall(r"\d+", ln)
-                    mem_kb = int(nums[0]) if nums else 0; break
-        except: pass
+    # Thread max
+    tm = safe_read("/proc/sys/kernel/threads-max")
+    if tm: row("Max Thread Sistem", tm)
 
-        status = ""
-        try:
-            for ln in (pid_dir/"status").read_text().split("\n"):
-                if ln.startswith("State:"):
-                    status = ln.split(":",1)[1].strip()[:8]; break
-        except: pass
-
-        hasil.append({"pid":pid,"name":name,"cpu":cpu_pct,
-                      "mem_kb":mem_kb,"mem_pct":mem_kb*1024/total_mem*100,"status":status})
-
-    top = sorted(hasil, key=lambda x: x["cpu"], reverse=True)[:15]
-    print(f"\n    {'PID':<8}{'Nama':<22}{'CPU%':>7}{'RAM':>10}{'RAM%':>7}  Status")
-    print(f"    {'─'*66}")
-    for p in top:
-        cc = C.RED if p["cpu"] > 50 else C.YLW if p["cpu"] > 20 else C.GRN
-        print(f"    {C.GRY}{p['pid']:<8}{C.RST}"
-              f"{p['name']:<22}"
-              f"{cc}{p['cpu']:>6.1f}%{C.RST}"
-              f"{C.CYN}{b2h(p['mem_kb']*1024):>10}{C.RST}"
-              f"{p['mem_pct']:>6.1f}%"
-              f"  {C.GRY}{p['status']}{C.RST}")
-
-    sec("Jumlah Proses:")
-    all_pids = [d for d in Path("/proc").iterdir() if d.name.isdigit()]
-    row("Total Proses",  len(all_pids))
-    row("Max Thread",    na(read("/proc/sys/kernel/threads-max")))
+    # Proses script sendiri
+    mypid = os.getpid()
+    sec(f"Proses Script Ini (PID {mypid}):")
+    my_status = safe_read(f"/proc/{mypid}/status")
+    if my_status:
+        for ln in my_status.split("\n"):
+            if any(ln.startswith(k) for k in ("Name:","VmRSS:","VmSize:","Threads:")):
+                k, _, v = ln.partition(":")
+                row(k.strip(), v.strip())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 9 — KECEPATAN JARINGAN REAL-TIME
+# FITUR 9 — KECEPATAN JARINGAN
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_netspeed():
-    hdr("FITUR 9 · KECEPATAN JARINGAN REAL-TIME", "📡")
+    hdr("FITUR 9 · KECEPATAN JARINGAN", "📡")
 
+    # Gunakan /sys/class/net/*/statistics/ (Android 10+ compatible)
     def total_bytes():
         rx = tx = 0
-        for iface, d in _parse_net_dev().items():
+        for iface, d in _net_iface_stats().items():
             if iface == "lo": continue
             rx += d["rx_bytes"]; tx += d["tx_bytes"]
         return rx, tx
 
     print(f"    {C.GRY}Mengukur 3 detik...{C.RST}", end="", flush=True)
-    r1, t1 = total_bytes(); time.sleep(3); r2, t2 = total_bytes()
-    print(f"\r{' '*30}\r", end="")
+    r1, t1 = total_bytes()
+    time.sleep(3)
+    r2, t2 = total_bytes()
+    print(f"\r{' '*32}\r", end="")
 
-    dl = (r2-r1)/3; ul = (t2-t1)/3
-    row("⬇ Download (real-time)", f"{b2h(dl)}/s  ({dl*8/1e6:.3f} Mbps)")
-    row("⬆ Upload   (real-time)", f"{b2h(ul)}/s  ({ul*8/1e6:.3f} Mbps)")
+    dl = (r2 - r1) / 3
+    ul = (t2 - t1) / 3
 
-    sec("Uji Download Nyata (1 MB dari Cloudflare):")
+    if dl > 0 or ul > 0:
+        row("⬇ Download (real-time)", f"{b2h(dl)}/s  ({dl*8/1e6:.3f} Mbps)")
+        row("⬆ Upload   (real-time)", f"{b2h(ul)}/s  ({ul*8/1e6:.3f} Mbps)")
+    else:
+        info("Tidak ada traffic terdeteksi. Pastikan ada aktifitas jaringan.")
+
+    sec("Uji Download (1 MB dari Cloudflare):")
     try:
         import urllib.request as ur
         t0   = time.perf_counter()
-        data = ur.urlopen("https://speed.cloudflare.com/__down?bytes=1048576", timeout=20).read()
+        req  = ur.Request("https://speed.cloudflare.com/__down?bytes=1048576",
+                          headers={"User-Agent": "cek-hardware-android/3.0"})
+        data = ur.urlopen(req, timeout=20).read()
         secs = time.perf_counter() - t0
-        row("Ukuran",     b2h(len(data)))
-        row("Waktu",      f"{secs:.2f} detik")
-        row("Throughput", f"{b2h(len(data)/secs)}/s  ({len(data)*8/secs/1e6:.2f} Mbps)")
+        row("Ukuran",    b2h(len(data)))
+        row("Waktu",     f"{secs:.2f} detik")
+        row("Kecepatan", f"{b2h(len(data)/secs)}/s  ({len(data)*8/secs/1e6:.2f} Mbps)")
+        ok("Speed test selesai!")
     except Exception as e:
-        row("Uji Download", f"Gagal — {e}")
+        warn(f"Uji download gagal: {type(e).__name__}")
+        info("Periksa koneksi internet atau coba lagi.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 10 — BENCHMARK CPU (PURE PYTHON)
+# FITUR 10 — BENCHMARK CPU
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_benchmark():
     hdr("FITUR 10 · BENCHMARK CPU (Pure Python)", "⚡")
     import math, threading
 
-    sec("Tes 1: Kalkulasi π (5 juta iterasi Leibniz):")
+    sec("Tes 1: Kalkulasi π — Leibniz 5 juta iterasi:")
     print(f"    {C.GRY}Menghitung...{C.RST}", end="", flush=True)
     t0 = time.perf_counter()
     pi, sign = 0.0, 1
@@ -638,11 +783,11 @@ def fitur_benchmark():
     pi *= 4
     s = time.perf_counter() - t0
     print(f"\r{' '*25}\r", end="")
-    row("Nilai π",    f"{pi:.10f}")
-    row("Waktu",      f"{s:.3f} detik")
-    row("Kecepatan",  f"{5_000_000/s/1e6:.2f} juta iter/detik")
+    row("Nilai π",   f"{pi:.10f}")
+    row("Waktu",     f"{s:.3f} detik")
+    row("Kecepatan", f"{5_000_000/s/1e6:.2f} juta iter/detik")
 
-    sec("Tes 2: Float ops (sin/cos/sqrt, 500 ribu iterasi):")
+    sec("Tes 2: Float Ops — sin/cos/sqrt 500 ribu iterasi:")
     print(f"    {C.GRY}Menghitung...{C.RST}", end="", flush=True)
     t0 = time.perf_counter()
     acc = 0.0
@@ -653,8 +798,8 @@ def fitur_benchmark():
     row("Waktu",     f"{s:.3f} detik")
     row("Kecepatan", f"{500_000/s/1e6:.2f} juta op/detik")
 
-    n_t = min(max(_n_cores() or 1, 1), 4)
-    sec(f"Tes 3: Multi-thread ({n_t} thread, 2 juta iter/thread):")
+    n_t = min(max(_n_cores(), 1), 4)
+    sec(f"Tes 3: Multi-Thread — {n_t} thread, 2 juta iter/thread:")
     results = []
     def worker(n):
         a = 0.0
@@ -666,12 +811,12 @@ def fitur_benchmark():
     for t in threads: t.join()
     s = time.perf_counter() - t0
     total_ops = 2_000_000 * n_t
-    row("Thread",         n_t)
-    row("Total Operasi",  f"{total_ops:,}")
-    row("Waktu",          f"{s:.3f} detik")
-    row("Throughput",     f"{total_ops/s/1e6:.2f} juta op/detik")
+    row("Thread",        n_t)
+    row("Total Operasi", f"{total_ops:,}")
+    row("Waktu",         f"{s:.3f} detik")
+    row("Throughput",    f"{total_ops/s/1e6:.2f} juta op/detik")
 
-    sec("Tes 4: Memori bandwidth (alokasi + write 30 MB):")
+    sec("Tes 4: Memori Bandwidth — alokasi + write 30 MB:")
     size = 30 * 1024 * 1024
     t0 = time.perf_counter()
     data = bytearray(size)
@@ -687,50 +832,72 @@ def fitur_benchmark():
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_monitor():
     hdr("FITUR 11 · MONITOR REAL-TIME (10 detik)", "📊")
-    print(f"    {C.GRY}Tekan Ctrl+C untuk berhenti lebih awal.{C.RST}\n")
+    print(f"    {C.GRY}Tekan Ctrl+C untuk berhenti.{C.RST}\n")
 
     def get_cpu_stat():
         try:
-            vals = list(map(int, Path("/proc/stat").read_text().split("\n")[0].split()[1:]))
-            idle = vals[3] + (vals[4] if len(vals)>4 else 0)
+            vals = list(map(int, safe_read("/proc/stat").split("\n")[0].split()[1:]))
+            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
             return idle, sum(vals)
         except: return 0, 1
 
-    def get_net():
+    def get_net_total():
         rx = tx = 0
-        for iface, d in _parse_net_dev().items():
-            if iface!="lo": rx+=d["rx_bytes"]; tx+=d["tx_bytes"]
+        for iface, d in _net_iface_stats().items():
+            if iface != "lo":
+                rx += d["rx_bytes"]; tx += d["tx_bytes"]
         return rx, tx
 
     ci, ct = get_cpu_stat()
-    nr, nt = get_net()
+    nr, nt = get_net_total()
 
-    print(f"    {C.BOLD}{'Dtk':>4}  {'CPU%':>7}  {'RAM%':>7}  {'Net⬇/s':>12}  {'Net⬆/s':>12}{C.RST}")
-    print(f"    {'─'*58}")
+    print(f"    {C.BOLD}{'Dtk':>4}  {'CPU%':>7}  {'RAM%':>7}  {'Suhu':>8}  {'Net⬇/s':>12}  {'Net⬆/s':>12}{C.RST}")
+    print(f"    {'─'*66}")
+
+    def get_max_temp():
+        """Ambil suhu tertinggi yang tersedia."""
+        max_t = None
+        for zone in safe_iterdir("/sys/class/thermal"):
+            val = safe_read(zone/"temp")
+            if val and val.lstrip("-").isdigit():
+                try:
+                    t = int(val)
+                    t_c = t/1000 if abs(t) > 200 else float(t)
+                    if 1 < t_c < 150:
+                        max_t = max(max_t or t_c, t_c)
+                except Exception: pass
+        return max_t
+
     try:
         for tick in range(1, 11):
             time.sleep(1)
             ci2, ct2 = get_cpu_stat()
-            dt = (ct2-ct) or 1
-            cpu = 100*(1-(ci2-ci)/dt)
+            dt  = (ct2 - ct) or 1
+            cpu = 100 * (1 - (ci2 - ci) / dt)
             ci, ct = ci2, ct2
 
-            m = _parse_meminfo()
-            total = m.get("MemTotal",1); free=m.get("MemFree",1)
-            buf   = m.get("Buffers",0); cach=m.get("Cached",0)+m.get("SReclaimable",0)
-            avail = m.get("MemAvailable", free)
-            used  = total-free-buf-cach
-            ram   = used/total*100 if total else 0
+            m     = _parse_meminfo()
+            total = m.get("MemTotal", 1)
+            free  = m.get("MemFree", 1)
+            buf   = m.get("Buffers", 0)
+            cach  = m.get("Cached", 0) + m.get("SReclaimable", 0)
+            used  = total - free - buf - cach
+            ram   = (max(used, 0) / total * 100) if total else 0
 
-            nr2, nt2 = get_net()
-            dl = nr2-nr; ul = nt2-nt
+            nr2, nt2 = get_net_total()
+            dl = nr2 - nr; ul = nt2 - nt
             nr, nt = nr2, nt2
 
-            cc = C.RED if cpu>80 else C.YLW if cpu>50 else C.GRN
-            rc = C.RED if ram>80 else C.YLW if ram>60 else C.GRN
+            temp = get_max_temp()
+            temp_s = f"{temp:.0f}°C" if temp else "N/A"
+            tc = C.RED if (temp or 0) >= 80 else C.YLW if (temp or 0) >= 55 else C.GRN
+
+            cc = C.RED if cpu > 80 else C.YLW if cpu > 50 else C.GRN
+            rc = C.RED if ram > 80 else C.YLW if ram > 60 else C.GRN
             print(f"    {C.GRY}{tick:>4}{C.RST}"
                   f"  {cc}{cpu:>6.1f}%{C.RST}"
                   f"  {rc}{ram:>6.1f}%{C.RST}"
+                  f"  {tc}{temp_s:>8}{C.RST}"
                   f"  {C.CYN}{b2h(dl):>12}{C.RST}"
                   f"  {C.CYN}{b2h(ul):>12}{C.RST}")
     except KeyboardInterrupt:
@@ -738,650 +905,628 @@ def fitur_monitor():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 12 — EXPORT LAPORAN JSON + TXT
+# FITUR 12 — LAPORAN JSON + TXT
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_laporan():
     hdr("FITUR 12 · LAPORAN LENGKAP (Export JSON + TXT)", "📋")
 
     m   = _parse_meminfo()
-    net = _parse_net_dev()
-    up  = float(read("/proc/uptime").split()[0]) if read("/proc/uptime").split() else 0
+    net = _net_iface_stats()
+    up  = safe_float(safe_read("/proc/uptime").split()[0] if safe_read("/proc/uptime").split() else "0")
 
+    # Battery
     bat_data = {}
-    for sup in (Path("/sys/class/power_supply").iterdir()
-                if Path("/sys/class/power_supply").exists() else []):
-        cap = read(sup/"capacity"); status = read(sup/"status")
-        if cap: bat_data[sup.name] = {"capacity": cap, "status": status}
+    for sup in safe_iterdir("/sys/class/power_supply"):
+        cap = safe_read(sup/"capacity")
+        status = safe_read(sup/"status")
+        tech   = safe_read(sup/"technology")
+        if cap: bat_data[sup.name] = {"capacity":cap,"status":status,"technology":tech}
 
-    cpuinfo = _parse_cpuinfo()
-    n_cores = _n_cores()
+    # Thermal
+    thermals = []
+    for zone in safe_iterdir("/sys/class/thermal"):
+        val = safe_read(zone/"temp")
+        if val and val.lstrip("-").isdigit():
+            try:
+                t_raw = int(val)
+                t_c   = t_raw/1000 if abs(t_raw)>200 else float(t_raw)
+                if 1 < t_c < 150:
+                    thermals.append({"zone": safe_read(zone/"type") or zone.name, "temp_c": round(t_c,1)})
+            except Exception: pass
 
+    # Android info
     android = {}
-    for key in ["ro.product.model","ro.product.brand","ro.build.version.release",
-                "ro.build.version.sdk","ro.product.manufacturer"]:
-        val = run(["getprop", key])
+    for key in ["ro.product.brand","ro.product.model","ro.product.manufacturer",
+                "ro.build.version.release","ro.build.version.sdk",
+                "ro.build.id","ro.product.cpu.abi","ro.hardware",
+                "ro.board.platform","ro.sf.lcd_density"]:
+        val = getprop(key)
         if val: android[key] = val
 
+    # Storage
     storage = []
     seen = set()
-    for ln in read("/proc/mounts").split("\n"):
+    for ln in safe_read("/proc/mounts").split("\n"):
         parts = ln.split()
-        if len(parts)<3: continue
-        dev,mpt,fs = parts[0],parts[1],parts[2]
-        if fs in ("tmpfs","proc","sysfs","devtmpfs","cgroup","devpts"): continue
-        if mpt in seen: continue
+        if len(parts) < 3: continue
+        dev, mpt, fs = parts[0], parts[1], parts[2]
+        if fs in SKIP_FS or mpt in seen: continue
         seen.add(mpt)
         res = _statvfs(mpt)
         if res and res[0] > 1024*1024:
             storage.append({"device":dev,"mountpoint":mpt,"filesystem":fs,
                             "total":res[0],"used":res[1],"free":res[2],"pct":round(res[3],2)})
 
-    # Thermal
-    thermals = []
-    for zone in sorted(Path("/sys/class/thermal").iterdir()) if Path("/sys/class/thermal").exists() else []:
-        temp_raw_s = read(zone/"temp")
-        if temp_raw_s.lstrip("-").isdigit():
-            temp_raw = int(temp_raw_s)
-            temp_c   = temp_raw/1000 if temp_raw > 200 else float(temp_raw)
-            thermals.append({"zone": read(zone/"type") or zone.name, "temp_c": round(temp_c,1)})
-
+    cpuinfo = _parse_cpuinfo()
     laporan = {
-        "meta":     {"waktu": datetime.datetime.now().isoformat(),
-                     "versi": "android-v2.0", "python": platform.python_version()},
-        "android":  android,
-        "sistem":   {"os":platform.system(),"kernel":platform.release(),
-                     "mesin":platform.machine(),"hostname":platform.node(),
-                     "uptime_detik":int(up)},
-        "cpu":      {"model":cpuinfo.get("model name",cpuinfo.get("Hardware","?")),
-                     "core":n_cores,"load_avg":read("/proc/loadavg").split()[:3]},
-        "ram":      {"total":m.get("MemTotal",0),"used":m.get("MemTotal",0)-m.get("MemFree",0),
-                     "available":m.get("MemAvailable",0),"swap_total":m.get("SwapTotal",0)},
-        "storage":  storage,
-        "baterai":  bat_data,
-        "jaringan": {iface:{"rx":d["rx_bytes"],"tx":d["tx_bytes"]} for iface,d in net.items()},
-        "thermal":  thermals,
+        "meta":    {"waktu":datetime.datetime.now().isoformat(),
+                    "versi":"android-v3.0","python":platform.python_version()},
+        "android": android,
+        "sistem":  {"os":platform.system(),"kernel":platform.release(),
+                    "mesin":platform.machine(),"hostname":platform.node(),
+                    "uptime_detik":int(up)},
+        "cpu":     {"model":cpuinfo.get("model name",cpuinfo.get("Hardware","?")),
+                    "cores":_n_cores(),"load_avg":safe_read("/proc/loadavg").split()[:3]},
+        "ram":     {"total":m.get("MemTotal",0),"available":m.get("MemAvailable",0),
+                    "swap_total":m.get("SwapTotal",0)},
+        "storage": storage,
+        "baterai": bat_data,
+        "thermal": thermals,
+        "jaringan":{iface:{"rx":d["rx_bytes"],"tx":d["tx_bytes"]} for iface,d in net.items()},
     }
 
     ts    = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     jfile = f"laporan_{ts}.json"
     tfile = f"laporan_{ts}.txt"
 
-    with open(jfile,"w",encoding="utf-8") as f:
+    with open(jfile, "w", encoding="utf-8") as f:
         json.dump(laporan, f, ensure_ascii=False, indent=2)
 
-    with open(tfile,"w",encoding="utf-8") as f:
-        f.write(f"CEK HARDWARE ANDROID v2.0\nWaktu: {laporan['meta']['waktu']}\n{'='*52}\n")
-        for k,v in android.items(): f.write(f"{k}: {v}\n")
-        f.write(f"\nRAM Total  : {b2h(laporan['ram']['total'])}\n")
-        f.write(f"RAM Terpakai: {b2h(laporan['ram']['used'])}\n")
+    with open(tfile, "w", encoding="utf-8") as f:
+        f.write(f"CEK HARDWARE ANDROID v3.0\nWaktu: {laporan['meta']['waktu']}\n{'='*54}\n")
+        f.write(f"\nPERANGKAT:\n")
+        for k,v in android.items(): f.write(f"  {k}: {v}\n")
+        f.write(f"\nSISTEM:\n  Uptime: {int(up)//3600}j {(int(up)%3600)//60}m\n")
+        f.write(f"  Kernel: {platform.release()}\n")
+        f.write(f"\nRAM: {b2h(laporan['ram']['total'])}  tersedia: {b2h(laporan['ram']['available'])}\n")
         for s in storage:
-            f.write(f"\nDisk {s['device']}: {b2h(s['total'])}  terpakai:{s['pct']}%\n")
-        for name,bat in bat_data.items():
-            f.write(f"\nBaterai {name}: {bat.get('capacity','?')}%  ({bat.get('status','?')})\n")
+            f.write(f"\nDisk {s['mountpoint']}: {b2h(s['total'])}  ({s['pct']}% terpakai)\n")
+        for name, bat in bat_data.items():
+            f.write(f"\nBaterai: {bat.get('capacity','?')}%  ({bat.get('status','?')})\n")
         for t in thermals:
-            f.write(f"\nSuhu {t['zone']}: {t['temp_c']}°C\n")
+            f.write(f"Suhu {t['zone']}: {t['temp_c']}°C\n")
 
     sec("File Tersimpan:")
     row("JSON", f"{jfile}  ({b2h(Path(jfile).stat().st_size)})")
     row("TXT",  f"{tfile}  ({b2h(Path(tfile).stat().st_size)})")
-    print(f"\n    {C.GRN}✓  Laporan berhasil disimpan!{C.RST}")
+    ok("Laporan berhasil disimpan!")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 13 — INFO GPU (ADRENO / MALI / DEVFREQ)
+# FITUR 13 — INFO GPU
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_gpu():
-    hdr("FITUR 13 · INFO GPU (Adreno / Mali / DevFreq)", "🎮")
-    found_any = False
+    hdr("FITUR 13 · INFO GPU", "🎮")
+    found = False
 
-    # ── Adreno: /sys/class/kgsl ──────────────────────────────────────────────
-    kgsl = Path("/sys/class/kgsl")
-    if kgsl.exists():
-        sec("Adreno GPU (kgsl):")
-        try: _kgsl_items = sorted(kgsl.iterdir())
-        except PermissionError: _kgsl_items=[]; print(f"    {C.GRY}Permission denied: /sys/class/kgsl{C.RST}")
-        for dev in _kgsl_items:
-            found_any = True
-            row("Device", dev.name)
-            for fname, label, unit in [
-                ("gpu_clock",           "Clock Saat Ini",   " Hz"),
-                ("gpuclk",              "Clock (gpuclk)",   " Hz"),
-                ("gpu_busy_percentage", "GPU Busy",         "%"),
-                ("gpu_model",           "Model GPU",        ""),
-                ("max_gpuclk",          "Clock Maksimum",   " Hz"),
-                ("min_clock_mhz",       "Clock Min",        " MHz"),
-                ("max_clock_mhz",       "Clock Maks",       " MHz"),
-                ("temp",                "Suhu GPU",         " milli°C"),
-                ("power_level",         "Power Level",      ""),
-                ("num_pwrlevels",       "Jumlah PwrLevel",  ""),
-                ("throttling",          "Throttling",       ""),
-                ("perfcounter_total_busy_time", "Busy Time Total", " ms"),
+    # Identifikasi GPU dari getprop (paling reliable tanpa root)
+    sec("Identifikasi GPU dari getprop:")
+    gpu_props = {
+        "ro.hardware.egl":          "EGL Driver",
+        "ro.board.platform":        "Platform (SoC)",
+        "ro.hardware":              "Hardware",
+        "ro.gfx.driver.0":         "GPU Driver",
+        "ro.gfx.driver.1":         "GPU Driver Alt",
+        "debug.hwui.renderer":      "Renderer",
+        "ro.opengles.version":      "OpenGL ES Version (raw)",
+    }
+    for key, label in gpu_props.items():
+        val = getprop(key)
+        if val:
+            # Decode OpenGL ES version
+            if key == "ro.opengles.version" and val.isdigit():
+                v = int(val)
+                major = (v >> 16) & 0xFFFF; minor = v & 0xFFFF
+                val = f"{val}  → OpenGL ES {major}.{minor}"
+            row(label, val)
+            found = True
+
+    # Tebak GPU dari platform
+    platform_val = getprop("ro.board.platform") or getprop("ro.hardware","")
+    if platform_val:
+        pf = platform_val.lower()
+        if any(k in pf for k in ["sm6","sm7","sm8","qcom","msm","sdm","snapdragon"]):
+            sec("GPU Terdeteksi: Qualcomm Adreno")
+            # Coba baca clock dari berbagai path alternatif
+            for freq_path in [
+                "/sys/class/kgsl/kgsl-3d0/gpu_clock",
+                "/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq",
+                "/sys/kernel/gpu/gpu_clock",
+                "/sys/kernel/debug/clk/gpuclk/measure",
             ]:
-                val = read(dev / fname)
-                if not val: val = read(dev / "device" / fname)
-                if val:
-                    if fname == "temp" and val.isdigit():
-                        val = f"{int(val)/1000:.1f}°C"
-                    elif fname in ("gpu_clock","gpuclk","max_gpuclk") and val.isdigit():
-                        val = f"{int(val)/1e6:.0f} MHz  ({val} Hz)"
-                    else:
-                        val = val + unit
-                    row(label, val)
+                val = safe_read(freq_path)
+                if val and val.isdigit():
+                    row("GPU Clock", f"{int(val)/1e6:.0f} MHz" if int(val) > 1e6 else f"{val} MHz")
+                    found = True; break
 
-    # ── Mali: /sys/class/misc/mali0 ──────────────────────────────────────────
-    mali_paths = list(Path("/sys/class/misc").glob("mali*")) if Path("/sys/class/misc").exists() else []
-    mali_paths += list(Path("/sys/devices").rglob("mali_gpu*"))[:2]
-    if mali_paths:
-        sec("Mali GPU:")
-        for mp in mali_paths[:2]:
-            found_any = True
-            row("Path", str(mp))
-            for fname, label in [("cur_freq","Frekuensi"),("utilization","Utilisasi %"),
-                                  ("core_mask","Core Mask"),("mem_pool_size","Pool Memori")]:
-                val = read(mp/fname)
-                if val: row(label, val)
+            for busy_path in [
+                "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
+                "/sys/kernel/gpu/gpu_busy",
+            ]:
+                val = safe_read(busy_path)
+                if val: row("GPU Busy", f"{val}%"); found = True; break
 
-    # ── DevFreq: bisa berisi GPU, DSP, dll ───────────────────────────────────
-    devfreq = Path("/sys/class/devfreq")
-    if devfreq.exists():
-        sec("DevFreq (GPU/DSP/Bus):")
-        try: _devfreq_items = sorted(devfreq.iterdir())
-        except PermissionError: _devfreq_items=[]; print(f"    {C.GRY}Permission denied: /sys/class/devfreq{C.RST}")
-        for df in _devfreq_items:
-            name = df.name
-            # Filter hanya yg kemungkinan GPU/graphics
-            if not any(k in name.lower() for k in
-                       ("gpu","kgsl","mali","adreno","gfx","graphics","dpu","disp","bus")):
-                continue
-            found_any = True
-            cur  = read(df/"cur_freq")
-            mxf  = read(df/"max_freq")
-            mnf  = read(df/"min_freq")
-            gov  = read(df/"governor")
-            avail= read(df/"available_frequencies")
-            print(f"\n    {C.BOLD}{C.MAG}{name}{C.RST}")
-            if cur.isdigit():  row("  Freq Saat Ini", f"{int(cur)//1000} kHz  ({int(cur)/1e6:.0f} MHz)")
-            if mxf.isdigit():  row("  Freq Maks",     f"{int(mxf)//1000} kHz")
-            if mnf.isdigit():  row("  Freq Min",      f"{int(mnf)//1000} kHz")
-            if gov:            row("  Governor",      gov)
-            if avail:          row("  Freq Tersedia", avail[:60])
+        elif any(k in pf for k in ["mali","arm","mt","helio","dimensity"]):
+            sec("GPU Terdeteksi: ARM Mali")
+            for freq_path in [
+                "/sys/class/misc/mali0/device/devfreq/mali0/cur_freq",
+                "/sys/devices/platform/mali.0/devfreq/mali.0/cur_freq",
+                "/sys/kernel/gpu/gpu_clock",
+            ]:
+                val = safe_read(freq_path)
+                if val and val.isdigit():
+                    row("GPU Clock", f"{int(val)/1e6:.0f} MHz")
+                    found = True; break
 
-    # ── DRM (Direct Rendering Manager) ───────────────────────────────────────
-    drm = Path("/sys/class/drm")
-    if drm.exists():
-        sec("DRM / Display:")
-        for card in sorted(drm.iterdir()):
-            if not card.name.startswith("card"): continue
-            found_any = True
-            row(card.name, read(card/"device/uevent") or "—")
+        elif any(k in pf for k in ["exynos","samsung"]):
+            sec("GPU Terdeteksi: ARM Mali (Samsung Exynos)")
+            found = True
 
-    if not found_any:
-        print(f"    {C.GRY}Tidak ada GPU terdeteksi di /sys/class/kgsl, /sys/class/devfreq, dll.")
-        print(f"    {C.GRY}Coba jalankan sebagai root untuk akses lebih lanjut.{C.RST}")
+    # DevFreq — scan semua, filter yang GPU
+    sec("DevFreq Frequencies:")
+    for df in safe_iterdir("/sys/class/devfreq"):
+        name = df.name.lower()
+        if not any(k in name for k in ("gpu","kgsl","mali","gfx","adreno","dpu")):
+            continue
+        cur = safe_read(df/"cur_freq"); mx = safe_read(df/"max_freq")
+        gov = safe_read(df/"governor")
+        if cur or mx:
+            print(f"\n    {C.MAG}{df.name}{C.RST}")
+            if cur.isdigit(): row("  Freq Saat Ini", f"{int(cur)/1e6:.0f} MHz")
+            if mx.isdigit():  row("  Freq Maks",     f"{int(mx)/1e6:.0f} MHz")
+            if gov:           row("  Governor",      gov)
+            found = True
+
+    if not found:
+        warn("Info GPU tidak bisa diakses langsung di Android 10+ tanpa root.")
+        info("GPU teridentifikasi dari SoC (getprop ro.board.platform) di atas.")
+        info("Untuk info GPU lengkap, gunakan aplikasi: CPU-Z, Aida64, DevCheck.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 14 — WIFI DETAIL (/proc/net/wireless + /sys/class/net/wlan*)
+# FITUR 14 — WIFI DETAIL
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_wifi():
     hdr("FITUR 14 · WiFi DETAIL", "📶")
     found = False
 
-    # ── /proc/net/wireless ────────────────────────────────────────────────────
-    wireless_raw = read("/proc/net/wireless")
-    if wireless_raw:
-        sec("/proc/net/wireless:")
-        lines = wireless_raw.strip().split("\n")
-        for ln in lines[2:]:
-            if ":" not in ln: continue
-            parts = ln.replace(".","").split()
-            if len(parts) < 4: continue
-            iface = parts[0].rstrip(":")
-            found = True
-            row(f"Interface",  iface)
-            try:
-                status = int(parts[1])
-                link   = int(parts[2])
-                level  = int(parts[3])
-                noise  = int(parts[4]) if len(parts)>4 else 0
-                row("  Status",       hex(status))
-                row("  Link Quality", f"{link}/70  ({link/70*100:.0f}%)")
-                row("  Signal Level", f"{level-256 if level>100 else level} dBm")
-                row("  Noise Level",  f"{noise-256 if noise>100 else noise} dBm")
-            except: pass
-
-    # ── /sys/class/net/wlan* ─────────────────────────────────────────────────
-    wlan_ifaces = list(Path("/sys/class/net").glob("wlan*"))
-    if not wlan_ifaces:
-        wlan_ifaces = list(Path("/sys/class/net").glob("wl*"))
-
-    for wi in wlan_ifaces:
+    # Interface WiFi dari /sys/class/net
+    sec("Interface WiFi:")
+    for iface_dir in safe_iterdir("/sys/class/net"):
+        iface = iface_dir.name
+        # Hanya interface wireless
+        if not (iface.startswith("wlan") or iface.startswith("wl")):
+            continue
+        oper  = safe_read(iface_dir/"operstate") or "?"
+        col   = C.GRN if oper == "up" else C.RED
+        mtu   = safe_read(iface_dir/"mtu")
+        txq   = safe_read(iface_dir/"tx_queue_len")
+        typ   = safe_read(iface_dir/"type")
         found = True
-        sec(f"Interface: {wi.name}")
-        mac    = read(wi/"address")
-        oper   = read(wi/"operstate")
-        speed  = read(wi/"speed")
-        mtu    = read(wi/"mtu")
-        txq    = read(wi/"tx_queue_len")
-        col    = C.GRN if oper == "up" else C.RED
-        row("MAC Address",    na(mac))
-        row("Status",         f"{col}{oper or '?'}{C.RST}")
-        if speed and speed != "-1": row("Speed",  f"{speed} Mbps")
-        if mtu:  row("MTU",          mtu)
-        if txq:  row("TX Queue Len", txq)
+        print(f"\n    {C.BOLD}{iface}{C.RST}  [{col}{oper}{C.RST}]")
+        ip = _get_ip_for(iface)
+        if ip and not ip.startswith("0."): row("  IP Address", ip)
+        mac = safe_read(iface_dir/"address")
+        if mac and mac not in ("00:00:00:00:00:00","02:00:00:00:00:00",""):
+            row("  MAC", mac)
+        else:
+            row("  MAC", "(diprivasi — Android 10+)")
+        if mtu: row("  MTU", mtu)
+        if txq: row("  TX Queue Len", txq)
 
-        # Baca uevent untuk lebih banyak info
-        ue = read(wi/"uevent")
-        for ln in ue.split("\n"):
-            if "=" in ln:
-                k, v = ln.split("=",1)
-                if k in ("INTERFACE","DEVTYPE","DRIVER"): row(f"  {k}", v)
+        # Stats
+        st = iface_dir / "statistics"
+        if st.exists():
+            rx = safe_int(safe_read(st/"rx_bytes"))
+            tx = safe_int(safe_read(st/"tx_bytes"))
+            row("  ⬇ Diterima", b2h(rx))
+            row("  ⬆ Dikirim",  b2h(tx))
 
-        # IP Address via proc/net/fib_trie atau fcntl
-        ip = _get_ip(wi.name)
-        if ip: row("IP Address", ip)
+    # getprop WiFi
+    sec("Android WiFi Properties (getprop):")
+    wifi_props = [
+        ("wifi.interface",            "Interface"),
+        ("wifi.direct.interface",     "WiFi Direct"),
+        ("wlan.driver.status",        "Driver Status"),
+        ("init.svc.wpa_supplicant",   "WPA Supplicant"),
+        ("ro.wifi.channels",          "Channels"),
+        ("ro.bootimage.build.id",     "Boot Build ID"),
+        ("net.wifi.state",            "WiFi State"),
+        ("dhcp.wlan0.dns1",           "DNS 1 (DHCP)"),
+        ("dhcp.wlan0.dns2",           "DNS 2 (DHCP)"),
+        ("dhcp.wlan0.gateway",        "Gateway (DHCP)"),
+        ("dhcp.wlan0.ipaddress",      "IP (DHCP)"),
+        ("dhcp.wlan0.mask",           "Netmask (DHCP)"),
+        ("dhcp.wlan0.leasetime",      "Lease Time (s)"),
+    ]
+    any_prop = False
+    for key, label in wifi_props:
+        val = getprop(key)
+        if val: row(label, val); any_prop = True; found = True
+    if not any_prop:
+        info("WiFi properties tidak tersedia.")
 
-    # ── iwconfig / iw ─────────────────────────────────────────────────────────
-    sec("iwconfig / iw output:")
-    for cmd in [["iwconfig"], ["iw","dev"]]:
-        out = run(cmd, timeout=4)
-        if out:
-            for ln in out.split("\n")[:20]:
-                if ln.strip():
-                    print(f"    {C.GRY}{ln}{C.RST}")
-            found = True
-            break
+    # dumpsys wifi — coba baca SSID & info koneksi
+    sec("Koneksi WiFi Aktif (dumpsys wifi):")
+    wifi_dump = run_cmd(["dumpsys","wifi"], timeout=8)
+    if wifi_dump:
+        for keyword in ["SSID","BSSID","supplicantState","linkSpeed","rssi",
+                        "frequency","signalStrength","ipAddress","macAddress"]:
+            for ln in wifi_dump.split("\n"):
+                if keyword in ln and "=" in ln and ln.strip():
+                    print(f"    {C.WHT}{ln.strip()[:80]}{C.RST}")
+                    found = True
+                    break
+    else:
+        info("dumpsys wifi tidak tersedia (perlu permission android.permission.DUMP).")
+        info("Coba: Pengaturan → WiFi → ketuk jaringan aktif untuk lihat detail.")
 
-    # ── getprop WiFi ─────────────────────────────────────────────────────────
-    sec("Android WiFi Properties:")
-    wifi_props = {
-        "wifi.interface":          "WiFi Interface",
-        "wifi.direct.interface":   "WiFi Direct",
-        "ro.wifi.channels":        "Channels",
-        "wlan.driver.status":      "Driver Status",
-        "init.svc.wpa_supplicant": "WPA Supplicant",
-    }
-    got_prop = False
-    for key, label in wifi_props.items():
-        val = run(["getprop", key])
-        if val:
-            row(label, val)
-            got_prop = True
-    if not got_prop:
-        print(f"    {C.GRY}getprop tidak tersedia.{C.RST}")
+    # Resolv.conf — DNS server
+    sec("DNS Server:")
+    resolv = safe_read("/etc/resolv.conf") or safe_read("/data/misc/net/resolv.conf")
+    if resolv:
+        for ln in resolv.split("\n"):
+            if ln.startswith("nameserver"): row("  DNS", ln.split()[-1]); found = True
+    else:
+        # Coba dari getprop
+        for prop in ["dhcp.wlan0.dns1","dhcp.wlan0.dns2","net.dns1","net.dns2"]:
+            val = getprop(prop)
+            if val: row(f"  DNS ({prop})", val); found = True
 
     if not found:
-        print(f"\n    {C.YLW}⚠  Tidak ada interface WiFi yang terdeteksi.{C.RST}")
-        print(f"    {C.GRY}Pastikan WiFi aktif dan script dijalankan di Termux.{C.RST}")
+        warn("WiFi interface tidak terdeteksi atau WiFi sedang tidak aktif.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 15 — KERNEL & MODUL (/proc/modules + /proc/sys/kernel)
+# FITUR 15 — KERNEL & SISTEM
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_kernel():
-    hdr("FITUR 15 · KERNEL & MODUL SISTEM", "🔧")
+    hdr("FITUR 15 · KERNEL & PARAMETER SISTEM", "🔧")
 
-    sec("Informasi Kernel:")
-    row("Versi Lengkap",  na(read("/proc/version")))
+    # Versi kernel — selalu tersedia
+    sec("Versi Kernel:")
+    ver = safe_read("/proc/version")
+    if ver:
+        row("Versi Lengkap", ver[:80])
     uname = platform.uname()
-    row("Kernel Release", uname.release)
-    row("Hostname",       uname.node)
-    row("Architecture",   uname.machine)
+    row("Release",    uname.release)
+    row("Mesin",      uname.machine)
 
-    # /proc/sys/kernel params
-    sec("Kernel Parameters (/proc/sys/kernel):")
-    kernel_params = {
-        "kernel/ostype":            "OS Type",
-        "kernel/osrelease":         "OS Release",
-        "kernel/version":           "Build Kernel",
-        "kernel/hostname":          "Hostname",
-        "kernel/domainname":        "Domain",
-        "kernel/pid_max":           "PID Max",
-        "kernel/threads-max":       "Threads Max",
-        "kernel/perf_event_max_sample_rate": "Perf Max Rate",
-        "kernel/randomize_va_space": "ASLR (0=off 2=full)",
-        "kernel/dmesg_restrict":    "dmesg Restrict",
-        "kernel/kptr_restrict":     "kptr Restrict",
-        "kernel/panic":             "Panic Timeout",
-        "kernel/ngroups_max":       "ngroups Max",
-        "kernel/sched_latency_ns":  "Sched Latency (ns)",
-        "kernel/printk":            "printk Level",
-        "vm/swappiness":            "VM Swappiness",
-        "vm/dirty_ratio":           "VM Dirty Ratio %",
-        "vm/overcommit_memory":     "VM Overcommit",
-        "net/core/rmem_max":        "Net rmem_max",
-        "net/core/wmem_max":        "Net wmem_max",
-    }
+    # /proc/sys/kernel params yang biasanya tersedia
+    sec("Kernel Parameters:")
+    params = [
+        ("kernel/ostype",          "OS Type"),
+        ("kernel/osrelease",       "OS Release"),
+        ("kernel/pid_max",         "PID Max"),
+        ("kernel/threads-max",     "Threads Max"),
+        ("kernel/randomize_va_space", "ASLR (0=off 2=full)"),
+        ("kernel/panic",           "Panic Timeout"),
+        ("kernel/ngroups_max",     "ngroups Max"),
+        ("kernel/sched_latency_ns","Sched Latency (ns)"),
+        ("vm/swappiness",          "VM Swappiness"),
+        ("vm/dirty_ratio",         "VM Dirty Ratio %"),
+        ("vm/overcommit_memory",   "VM Overcommit"),
+        ("vm/min_free_kbytes",     "Min Free KB"),
+        ("net/core/rmem_max",      "Net rmem_max"),
+        ("net/core/wmem_max",      "Net wmem_max"),
+        ("net/core/somaxconn",     "Max Connections"),
+    ]
     base = Path("/proc/sys")
-    for rel, label in kernel_params.items():
-        val = read(base / rel)
-        if val: row(label, val[:70])
+    for rel, label in params:
+        val = safe_read(base/rel)
+        if val: row(label, val[:60])
 
-    # Modul yang dimuat
-    sec("Modul Kernel Dimuat (/proc/modules):")
-    mods_raw = read("/proc/modules")
+    # /proc/cmdline — di Android 10+ biasanya blocked
+    sec("Kernel Boot Cmdline:")
+    cmdline = safe_read("/proc/cmdline")
+    if cmdline:
+        for part in cmdline.split():
+            if any(k in part for k in ("androidboot","selinux","mem","cpu","init")):
+                print(f"    {C.GRY}{part}{C.RST}")
+    else:
+        info("Boot cmdline tidak tersedia (dibatasi Android 10+).")
+        # Fallback getprop
+        for key in ["ro.boot.selinux","ro.bootmode","ro.boot.hardware"]:
+            val = getprop(key)
+            if val: row(key, val)
+
+    # /proc/modules — hampir selalu blocked
+    sec("Modul Kernel (/proc/modules):")
+    mods_raw = safe_read("/proc/modules")
     if mods_raw:
         mods = []
         for ln in mods_raw.split("\n"):
             parts = ln.split()
-            if len(parts) >= 3:
-                name    = parts[0]
-                size    = int(parts[1]) if parts[1].isdigit() else 0
-                used_by = parts[3].strip(",") if len(parts)>3 else "-"
-                state   = parts[4] if len(parts)>4 else "?"
-                mods.append((name, size, used_by, state))
-
+            if len(parts) >= 2:
+                mods.append((parts[0], safe_int(parts[1]) if len(parts)>1 else 0))
         row("Total Modul", len(mods))
-        print(f"\n    {C.BOLD}{'Nama':<28}{'Ukuran':>10}  Digunakan oleh{C.RST}")
-        print(f"    {'─'*60}")
-        for name, size, used_by, state in sorted(mods, key=lambda x: x[1], reverse=True)[:25]:
-            sc = C.GRN if state == "Live" else C.YLW
-            print(f"    {C.CYN}{name:<28}{C.RST}"
-                  f"{b2h(size):>10}  "
-                  f"{C.GRY}{used_by[:22]:<22}{C.RST}  {sc}{state}{C.RST}")
-        if len(mods) > 25:
-            print(f"    {C.GRY}... dan {len(mods)-25} modul lainnya.{C.RST}")
+        for name, size in sorted(mods, key=lambda x: x[1], reverse=True)[:20]:
+            print(f"    {C.CYN}{name:<30}{C.RST}  {b2h(size)}")
     else:
-        print(f"    {C.GRY}/proc/modules tidak tersedia (mungkin perlu akses root).{C.RST}")
+        info("/proc/modules tidak bisa diakses (normal di Android 10+ tanpa root).")
+        info("Coba: adb shell cat /proc/modules (via ADB)")
 
-    # /proc/cmdline (kernel boot args)
-    sec("Kernel Boot Command Line:")
-    cmdline = read("/proc/cmdline")
-    if cmdline:
-        for part in cmdline.split():
-            print(f"    {C.GRY}{part}{C.RST}")
+    # SELinux status
+    sec("SELinux:")
+    for path in ["/sys/fs/selinux/enforce", "/selinux/enforce"]:
+        val = safe_read(path)
+        if val:
+            mode = "Enforcing" if val == "1" else "Permissive"
+            col  = C.GRN if val == "1" else C.YLW
+            row("Mode", f"{col}{mode}{C.RST}  (raw: {val})")
+            break
     else:
-        print(f"    {C.GRY}Tidak tersedia.{C.RST}")
+        selinux_prop = getprop("ro.build.selinux") or getprop("ro.boot.selinux")
+        row("SELinux (getprop)", selinux_prop or "Tidak tersedia")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 16 — VIRTUAL MEMORY STATS (/proc/vmstat)
+# FITUR 16 — VIRTUAL MEMORY STATS
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_vmstat():
-    hdr("FITUR 16 · VIRTUAL MEMORY STATS (/proc/vmstat)", "🧮")
+    hdr("FITUR 16 · VIRTUAL MEMORY STATS", "🧮")
 
-    vmstat_raw = read("/proc/vmstat")
-    if not vmstat_raw:
-        print(f"    {C.YLW}⚠  /proc/vmstat tidak tersedia.{C.RST}"); return
+    # /proc/vmstat
+    vmraw = safe_read("/proc/vmstat")
+    if vmraw:
+        vm = {}
+        for ln in vmraw.split("\n"):
+            parts = ln.split()
+            if len(parts) == 2: vm[parts[0]] = safe_int(parts[1])
 
-    vm = {}
-    for ln in vmstat_raw.split("\n"):
-        parts = ln.split()
-        if len(parts) == 2:
-            vm[parts[0]] = int(parts[1])
+        sec("Page Activity:")
+        row("Page Fault Minor (pgfault)",   f"{vm.get('pgfault',0):,}")
+        row("Page Fault Major (pgmajfault)",f"{vm.get('pgmajfault',0):,}")
+        row("Page In  (pgpgin)",            f"{vm.get('pgpgin',0):,} KB")
+        row("Page Out (pgpgout)",           f"{vm.get('pgpgout',0):,} KB")
+        row("Page Freed (pgfree)",          f"{vm.get('pgfree',0):,}")
 
-    sec("Page Faults:")
-    row("Minor Faults (pgfault)",  f"{vm.get('pgfault',0):,}")
-    row("Major Faults (pgmajfault)",f"{vm.get('pgmajfault',0):,}")
+        sec("Swap Activity:")
+        row("Swap In  (pswpin)",  f"{vm.get('pswpin',0):,}  halaman masuk")
+        row("Swap Out (pswpout)", f"{vm.get('pswpout',0):,}  halaman keluar")
 
-    sec("Swap Activity:")
-    row("Swap In  (pswpin)",  f"{vm.get('pswpin',0):,}  halaman masuk")
-    row("Swap Out (pswpout)", f"{vm.get('pswpout',0):,}  halaman keluar")
-    swap_total = vm.get('pswpin',0) + vm.get('pswpout',0)
-    row("Total Swap I/O",     f"{swap_total:,}")
+        sec("Memory Reclaim:")
+        row("kswapd steal",  f"{vm.get('kswapd_steal',0):,}")
+        row("OOM Kill",      f"{vm.get('oom_kill',0):,}")
+        if vm.get("oom_kill",0) > 0:
+            warn(f"OOM Killer pernah berjalan {vm['oom_kill']}x — RAM pernah kritis!")
 
-    sec("Paging Activity:")
-    row("Page In  (pgpgin)",  f"{vm.get('pgpgin',0):,}  KB")
-    row("Page Out (pgpgout)", f"{vm.get('pgpgout',0):,}  KB")
-    row("Page Freed (pgfree)",f"{vm.get('pgfree',0):,}")
-    row("Page Aktif→Inaktif", f"{vm.get('pgdeactivate',0):,}")
-    row("Page Inaktif→Aktif", f"{vm.get('pgactivate',0):,}")
+        sec("Huge Pages:")
+        row("THP Fault Alloc",    f"{vm.get('thp_fault_alloc',0):,}")
+        row("THP Collapse Alloc", f"{vm.get('thp_collapse_alloc',0):,}")
 
-    sec("Memory Reclaim:")
-    row("kswapd steal",       f"{vm.get('kswapd_steal',0):,}")
-    row("Direct reclaim",     f"{vm.get('allocstall',0):,}")
-    row("OOM Kill",           f"{vm.get('oom_kill',0):,}")
-    oom = vm.get('oom_kill',0)
-    if oom > 0:
-        print(f"    {C.RED}⚠  OOM Killer aktif — {oom} proses pernah dibunuh!{C.RST}")
+        # Rate (dari /proc/stat yang lebih reliable)
+        sec("Context Switch & Interrupt (dari /proc/stat):")
+        stat_raw = safe_read("/proc/stat")
+        for ln in stat_raw.split("\n"):
+            parts = ln.split()
+            if not parts: continue
+            if parts[0] == "ctxt"    and len(parts)>1: row("Context Switches total", f"{int(parts[1]):,}")
+            if parts[0] == "intr"    and len(parts)>1: row("Interrupts total",        f"{int(parts[1]):,}")
+            if parts[0] == "softirq" and len(parts)>1: row("Soft IRQ total",          f"{int(parts[1]):,}")
+            if parts[0] == "procs_running": row("Proses Running",               parts[1])
+            if parts[0] == "procs_blocked": row("Proses Blocked",               parts[1])
 
-    sec("CPU Context Switches & Interrupts (dari /proc/stat):")
-    # ctxt, intr, softirq ada di /proc/stat, bukan /proc/vmstat
-    stat_raw = read("/proc/stat")
-    stat_ctxt = stat_intr = stat_sirq = 0
-    for ln in stat_raw.split("\n"):
-        parts = ln.split()
-        if not parts: continue
-        if parts[0] == "ctxt"    and len(parts)>1: stat_ctxt = int(parts[1])
-        if parts[0] == "intr"    and len(parts)>1: stat_intr = int(parts[1])
-        if parts[0] == "softirq" and len(parts)>1: stat_sirq = int(parts[1])
-    row("Context Switches (ctxt)", f"{stat_ctxt:,}")
-    row("Interrupts (intr)",        f"{stat_intr:,}")
-    row("Soft IRQ (softirq)",       f"{stat_sirq:,}")
-
-    sec("Huge Pages:")
-    row("THP Fault Alloc",   f"{vm.get('thp_fault_alloc',0):,}")
-    row("THP Collapse Alloc",f"{vm.get('thp_collapse_alloc',0):,}")
-
-    # Snapshot sebelum & sesudah untuk activity rate
-    sec("Activity Rate (diukur 3 detik):")
-    vm_keys = ["pgpgin","pgpgout","pswpin","pswpout","pgfault","ctxt"]
-    before = {}
-    for k in vm_keys: before[k] = vm.get(k, 0)
-
-    print(f"    {C.GRY}Mengukur...{C.RST}", end="", flush=True)
-    time.sleep(3)
-    print(f"\r{' '*20}\r", end="")
-
-    vm2 = {}
-    for ln in read("/proc/vmstat").split("\n"):
-        parts = ln.split()
-        if len(parts) == 2: vm2[parts[0]] = int(parts[1])
-
-    row("Page In/s",        f"{(vm2.get('pgpgin',0)-before['pgpgin'])//3:,} KB/s")
-    row("Page Out/s",       f"{(vm2.get('pgpgout',0)-before['pgpgout'])//3:,} KB/s")
-    row("Page Fault/s",     f"{(vm2.get('pgfault',0)-before['pgfault'])//3:,}/s")
-    row("Context Switch/s", f"{(vm2.get('ctxt',0)-before['ctxt'])//3:,}/s")
-    row("Swap In/s",        f"{(vm2.get('pswpin',0)-before['pswpin'])//3:,} halaman/s")
-    row("Swap Out/s",       f"{(vm2.get('pswpout',0)-before['pswpout'])//3:,} halaman/s")
+        # Activity rate (ukur 3 detik)
+        sec("Activity Rate (diukur 3 detik):")
+        snap = {k: vm.get(k,0) for k in ["pgpgin","pgpgout","pswpin","pswpout","pgfault"]}
+        print(f"    {C.GRY}Mengukur...{C.RST}", end="", flush=True)
+        time.sleep(3)
+        print(f"\r{' '*20}\r", end="")
+        vm2 = {}
+        for ln in safe_read("/proc/vmstat").split("\n"):
+            parts = ln.split()
+            if len(parts) == 2: vm2[parts[0]] = safe_int(parts[1])
+        row("Page In/s",    f"{(vm2.get('pgpgin',0)-snap['pgpgin'])//3:,} KB/s")
+        row("Page Out/s",   f"{(vm2.get('pgpgout',0)-snap['pgpgout'])//3:,} KB/s")
+        row("Page Fault/s", f"{(vm2.get('pgfault',0)-snap['pgfault'])//3:,}/s")
+        row("Swap In/s",    f"{(vm2.get('pswpin',0)-snap['pswpin'])//3:,} hal/s")
+    else:
+        info("/proc/vmstat tidak tersedia. Coba alternatif:")
+        # Fallback: info dari /proc/meminfo yang selalu tersedia
+        m = _parse_meminfo()
+        sec("Info Memori dari /proc/meminfo:")
+        keys = ["MemTotal","MemFree","MemAvailable","Buffers","Cached","SwapTotal",
+                "SwapFree","Active","Inactive","Unevictable","Mlocked"]
+        for k in keys:
+            if k in m: row(k, b2h(m[k]))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 17 — SENSOR IIO / HARDWARE SENSOR
+# FITUR 17 — SENSOR HARDWARE
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_sensor():
-    hdr("FITUR 17 · SENSOR IIO & HARDWARE SENSOR", "🧭")
+    hdr("FITUR 17 · SENSOR HARDWARE", "🧭")
     found = False
 
-    # ── IIO Sensors (/sys/bus/iio/devices) ───────────────────────────────────
+    # dumpsys sensorservice — paling reliable di Android Termux
+    sec("Sensor List (dumpsys sensorservice):")
+    sensor_dump = run_cmd(["dumpsys","sensorservice"], timeout=10)
+    if sensor_dump:
+        in_list = False
+        count   = 0
+        for ln in sensor_dump.split("\n"):
+            if "Sensor List" in ln or "sensor 0x" in ln.lower():
+                in_list = True
+            if in_list and ln.strip():
+                # Tampilkan baris yang berisi info sensor
+                if any(k in ln for k in ["handle","type","name","vendor",
+                                         "0x0000","Accel","Gyro","Magnet",
+                                         "Pressure","Light","Proximity","Gravity"]):
+                    print(f"    {C.WHT}{ln.strip()[:80]}{C.RST}")
+                    count += 1
+                    found = True
+                if count >= 30: break
+        if count == 0:
+            # Tampilkan sebagian awal dump
+            for ln in sensor_dump.split("\n")[:25]:
+                if ln.strip(): print(f"    {C.GRY}{ln.strip()[:80]}{C.RST}")
+            found = True
+    else:
+        info("dumpsys sensorservice tidak tersedia.")
+
+    # IIO sensors — biasanya blocked di Android 10+
+    sec("IIO Sensors (/sys/bus/iio/devices):")
     iio_base = Path("/sys/bus/iio/devices")
-    if iio_base.exists():
-        sec("IIO Sensors (/sys/bus/iio/devices):")
-        try: _iio_items = sorted(iio_base.iterdir())
-        except PermissionError: _iio_items=[]; print(f"    {C.GRY}Permission denied: /sys/bus/iio/devices{C.RST}")
-        for dev in _iio_items:
-            name = read(dev/"name") or dev.name
+    if not iio_base.exists():
+        info("/sys/bus/iio/devices tidak tersedia di perangkat ini.")
+    else:
+        for dev in safe_iterdir(iio_base):
+            name = safe_read(dev/"name") or dev.name
             found = True
             print(f"\n    {C.BOLD}{C.MAG}{name}{C.RST}  [{dev.name}]")
-
-            # Baca semua channel IIO yg tersedia
             for pat, label in [
                 ("in_accel_*_raw",       "Akselerometer"),
                 ("in_anglvel_*_raw",     "Giroskop"),
                 ("in_magn_*_raw",        "Magnetometer"),
                 ("in_proximity_raw",     "Proximity"),
-                ("in_illuminance_raw",   "Cahaya Lux"),
+                ("in_illuminance_raw",   "Cahaya"),
                 ("in_pressure_raw",      "Tekanan"),
-                ("in_humidityrelative_raw","Kelembaban"),
                 ("in_temp_raw",          "Suhu"),
-                ("in_rot_*_raw",         "Rotasi"),
-                ("in_gravity_*_raw",     "Gravitasi"),
-                ("in_steps_raw",         "Langkah"),
-                ("in_distance_raw",      "Jarak"),
             ]:
-                files = list(dev.glob(pat))
-                if files:
-                    vals = []
-                    for f in sorted(files)[:3]:
-                        v = read(f)
-                        if v: vals.append(f"{f.name.split('_')[2] if '_' in f.name else f.stem}={v}")
+                try:
+                    files = list(dev.glob(pat))
+                    if not files: continue
+                    vals = [f"{f.stem.split('_')[-2] if '_' in f.stem else f.stem}={safe_read(f)}"
+                            for f in sorted(files)[:3] if safe_read(f)]
                     if vals:
-                        # Cek scale factor — bungkus try/except agar tidak crash jika format aneh
                         scale = 1.0
                         try:
-                            scale_f = list(dev.glob(pat.replace("_raw","_scale")))[:1]
-                            if scale_f:
-                                sv = read(scale_f[0])
-                                if sv: scale = float(sv)
-                        except (ValueError, OSError): scale = 1.0
-                        row(f"  {label}", ", ".join(vals) + f"  (scale={scale})")
+                            sf = list(dev.glob(pat.replace("_raw","_scale")))
+                            if sf:
+                                sv = safe_read(sf[0])
+                                if sv: scale = safe_float(sv, 1.0)
+                        except Exception: pass
+                        row(f"  {label}", ", ".join(vals) + f"  (×{scale})")
+                except Exception: continue
+            sf = safe_read(dev/"sampling_frequency")
+            if sf: row("  Sampling Hz", sf)
 
-            # Sampling freq
-            sf = read(dev/"sampling_frequency")
-            if sf: row("  Sampling Freq", f"{sf} Hz")
+    # Input devices yang adalah sensor
+    sec("Input Sensor Devices (/sys/class/input):")
+    sensor_keywords = ("accel","gyro","magnet","sensor","compass","baro",
+                       "prox","light","hall","gesture","orientation")
+    found_input = False
+    for inp in safe_iterdir("/sys/class/input"):
+        name = safe_read(inp/"device/name") or safe_read(inp/"name") or ""
+        if not name: continue
+        if not any(k in name.lower() for k in sensor_keywords): continue
+        phys = safe_read(inp/"device/phys") or "—"
+        row(f"  {name}", phys)
+        found_input = True; found = True
 
-            # Buffer
-            buf_en = read(dev/"buffer/enable")
-            if buf_en: row("  Buffer Enable", buf_en)
-
-    # ── /sys/class/sensors (non-IIO) ─────────────────────────────────────────
-    sens_class = Path("/sys/class/sensors")
-    if sens_class.exists():
-        sec("/sys/class/sensors:")
-        try: _sens_items = sorted(sens_class.iterdir())
-        except PermissionError: _sens_items=[]; print(f"    {C.GRY}Permission denied: /sys/class/sensors{C.RST}")
-        for s in _sens_items:
-            found = True
-            name = read(s/"name") or s.name
-            vendor = read(s/"vendor")
-            row(name, na(vendor))
-
-    # ── Input event devices (touchscreen, accelerometer sbg input) ───────────
-    input_base = Path("/sys/class/input")
-    if input_base.exists():
-        sec("Input Devices (/sys/class/input):")
-        try: _input_items = sorted(input_base.iterdir())
-        except PermissionError: _input_items=[]; print(f"    {C.GRY}Permission denied: /sys/class/input{C.RST}")
-        for inp in _input_items:
-            name = read(inp/"device/name") or read(inp/"name") or ""
-            if not name: continue
-            # Filter hanya sensor / hardware input yg relevan
-            if not any(k in name.lower() for k in
-                       ("accel","gyro","magnet","sensor","compass","baro",
-                        "prox","light","touch","key","hall","gesture")):
-                continue
-            found = True
-            phys = read(inp/"device/phys") or read(inp/"phys") or "—"
-            row(f"  {name}", phys)
-
-    # ── getprop sensor ────────────────────────────────────────────────────────
-    sec("Android Sensor Properties:")
-    sensor_props = {
-        "ro.hardware.sensors":      "Sensor HAL",
-        "sensors.iio.auto_trigger": "IIO Auto Trigger",
-    }
-    any_s = False
-    for key, label in sensor_props.items():
-        val = run(["getprop", key])
-        if val: row(label, val); any_s = True
-    if not any_s:
-        print(f"    {C.GRY}Tidak ada sensor property dari getprop.{C.RST}")
+    if not found_input:
+        info("Tidak ada sensor terdeteksi via /sys/class/input")
 
     if not found:
-        print(f"\n    {C.YLW}⚠  Tidak ada sensor IIO terdeteksi.")
-        print(f"    {C.GRY}Di Termux, sensor mungkin perlu akses root atau permission.{C.RST}")
+        warn("Sensor tidak bisa diakses langsung tanpa root di Android 10+.")
+        info("Gunakan: CPU-Z, Sensor Kinetics, atau Physics Toolbox Sensor Suite")
+        info("untuk membaca sensor via Android API.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FITUR 18 — ANDROID LANJUT (dumpsys, pm list, dll)
+# FITUR 18 — ANDROID LANJUT
 # ══════════════════════════════════════════════════════════════════════════════
 def fitur_android_lanjut():
     hdr("FITUR 18 · INFO ANDROID LANJUT", "🤖")
 
-    # ── dumpsys battery ───────────────────────────────────────────────────────
-    sec("dumpsys battery:")
-    out = run(["dumpsys","battery"], timeout=6)
-    if out:
-        for ln in out.split("\n")[:20]:
+    # dumpsys battery
+    sec("Baterai (dumpsys battery):")
+    bat_out = run_cmd(["dumpsys","battery"], timeout=6)
+    if bat_out:
+        for ln in bat_out.split("\n"):
             if ":" in ln and ln.strip():
                 k, _, v = ln.partition(":")
                 row(k.strip()[:28], v.strip()[:50])
     else:
-        print(f"    {C.GRY}dumpsys tidak tersedia (butuh akses ADB / Termux).{C.RST}")
+        info("dumpsys battery tidak tersedia.")
 
-    # ── dumpsys cpuinfo (top-level) ───────────────────────────────────────────
-    sec("dumpsys cpuinfo (CPU Load):")
-    cpuout = run(["dumpsys","cpuinfo"], timeout=8)
-    if cpuout:
-        for ln in cpuout.split("\n")[:15]:
-            if ln.strip(): print(f"    {C.GRY}{ln}{C.RST}")
-    else:
-        print(f"    {C.GRY}Tidak tersedia.{C.RST}")
-
-    # ── pm list packages (hitung total) ───────────────────────────────────────
+    # Package manager
     sec("Package Manager (pm):")
-    all_pkg  = run(["pm","list","packages"], timeout=10)
-    sys_pkg  = run(["pm","list","packages","-s"], timeout=10)
-    user_pkg = run(["pm","list","packages","-3"], timeout=10)
-    dis_pkg  = run(["pm","list","packages","-d"], timeout=10)
-    if all_pkg:
-        total = len([l for l in all_pkg.split("\n") if l.strip()])
-        sys_c = len([l for l in sys_pkg.split("\n") if l.strip()]) if sys_pkg else "?"
-        usr_c = len([l for l in user_pkg.split("\n") if l.strip()]) if user_pkg else "?"
-        dis_c = len([l for l in dis_pkg.split("\n") if l.strip()]) if dis_pkg else "?"
-        row("Total Paket",        total)
-        row("Sistem",             sys_c)
-        row("User (Install)",     usr_c)
-        row("Dinonaktifkan",      dis_c)
+    all_pkg  = run_cmd(["pm","list","packages"],      timeout=12)
+    user_pkg = run_cmd(["pm","list","packages","-3"], timeout=12)
+    sys_pkg  = run_cmd(["pm","list","packages","-s"], timeout=12)
+    dis_pkg  = run_cmd(["pm","list","packages","-d"], timeout=12)
 
+    if all_pkg:
+        all_c  = len([l for l in all_pkg.split("\n") if l.strip()])
+        usr_c  = len([l for l in user_pkg.split("\n") if l.strip()]) if user_pkg else 0
+        sys_c  = len([l for l in sys_pkg.split("\n")  if l.strip()]) if sys_pkg  else 0
+        dis_c  = len([l for l in dis_pkg.split("\n")  if l.strip()]) if dis_pkg  else 0
+        row("Total Paket",    all_c)
+        row("Sistem",         sys_c)
+        row("User/Install",   usr_c)
+        row("Dinonaktifkan",  dis_c)
         if user_pkg:
-            sec("Aplikasi User Terinstall:")
+            sec("Aplikasi User (maks 20):")
             for ln in sorted(user_pkg.split("\n"))[:20]:
                 pkg = ln.replace("package:","").strip()
                 if pkg: print(f"    {C.CYN}· {pkg}{C.RST}")
-            if usr_c != "?" and int(str(usr_c)) > 20:
-                print(f"    {C.GRY}... dan {int(str(usr_c))-20} lainnya.{C.RST}")
+            if usr_c > 20:
+                print(f"    {C.GRY}... dan {usr_c-20} lainnya{C.RST}")
     else:
-        print(f"    {C.GRY}pm tidak tersedia (butuh Termux + permission).{C.RST}")
+        info("pm tidak tersedia atau butuh permission.")
 
-    # ── getprop lanjut ────────────────────────────────────────────────────────
-    sec("Android Properties Lanjut:")
-    adv_props = {
-        "ro.product.first_api_level":   "First API Level",
-        "ro.crypto.type":               "Enkripsi",
-        "ro.secure":                    "Secure Boot",
-        "ro.debuggable":                "Debuggable",
-        "ro.adb.secure":                "ADB Secure",
-        "sys.usb.state":                "USB State",
-        "persist.sys.language":         "Bahasa Sistem",
-        "persist.sys.country":          "Negara",
-        "persist.sys.timezone":         "Timezone",
-        "ro.sf.lcd_density":            "LCD Density (dpi)",
-        "ro.opengles.version":          "OpenGL ES Version",
-        "ro.dalvik.vm.heapsize":        "Dalvik Heap Size",
-        "dalvik.vm.heapgrowthlimit":    "Heap Growth Limit",
-        "dalvik.vm.heapstartsize":      "Heap Start Size",
-        "dalvik.vm.heapsize":           "Dalvik VM Heap Max",
-        "ro.build.selinux":             "SELinux",
-        "ro.boot.selinux":              "SELinux Boot",
-    }
-    any_p = False
-    for key, label in adv_props.items():
-        val = run(["getprop", key])
-        if val: row(label, val[:60]); any_p = True
-    if not any_p:
-        print(f"    {C.GRY}getprop tidak tersedia.{C.RST}")
-
-    # ── wm size & density ─────────────────────────────────────────────────────
+    # Display
     sec("Display (wm):")
-    size = run(["wm","size"], timeout=4)
-    dens = run(["wm","density"], timeout=4)
-    if size: row("Resolusi",  size.replace("Physical size: ",""))
-    if dens: row("Density",   dens.replace("Physical density: ","") + " dpi")
-    if not size and not dens:
-        print(f"    {C.GRY}wm tidak tersedia.{C.RST}")
+    wm_size  = run_cmd(["wm","size"],    timeout=4)
+    wm_dens  = run_cmd(["wm","density"], timeout=4)
+    if wm_size: row("Resolusi",  wm_size.replace("Physical size: ",""))
+    if wm_dens: row("Density",   wm_dens.replace("Physical density: ","") + " dpi")
+    # Fallback dari getprop
+    dpi = getprop("ro.sf.lcd_density")
+    if dpi and not wm_dens: row("Density (getprop)", f"{dpi} dpi")
 
-    # ── settings get ─────────────────────────────────────────────────────────
+    # Getprop lanjut
+    sec("Android Properties Lanjut (getprop):")
+    adv_props = [
+        ("ro.product.first_api_level",   "First API Level"),
+        ("ro.crypto.type",               "Enkripsi"),
+        ("ro.crypto.state",              "Status Enkripsi"),
+        ("ro.secure",                    "Secure Boot"),
+        ("ro.debuggable",                "Debuggable"),
+        ("ro.adb.secure",                "ADB Secure"),
+        ("sys.usb.state",                "USB State"),
+        ("persist.sys.timezone",         "Timezone"),
+        ("persist.sys.language",         "Bahasa"),
+        ("ro.opengles.version",          "OpenGL ES (raw)"),
+        ("dalvik.vm.heapsize",           "Dalvik VM Heap Max"),
+        ("dalvik.vm.heapgrowthlimit",    "Heap Growth Limit"),
+        ("ro.dalvik.vm.native.bridge",   "Native Bridge"),
+        ("ro.build.selinux",             "SELinux"),
+        ("ro.product.first_api_level",   "First API Level"),
+        ("persist.vendor.radio.rat_on",  "Radio RAT"),
+        ("gsm.operator.alpha",           "Operator (SIM1)"),
+        ("gsm.operator.alpha.2",         "Operator (SIM2)"),
+        ("gsm.network.type",             "Tipe Jaringan"),
+    ]
+    for key, label in adv_props:
+        val = getprop(key)
+        if val: row(label, val[:60])
+
+    # Settings system
     sec("Settings System:")
-    settings_keys = [
+    settings_items = [
         ("screen_brightness",      "Kecerahan Layar"),
-        ("screen_off_timeout",     "Timeout Layar (ms)"),
+        ("screen_off_timeout",     "Timeout Layar"),
         ("accelerometer_rotation", "Rotasi Otomatis"),
         ("sound_effects_enabled",  "Efek Suara"),
-        ("wifi_sleep_policy",      "WiFi Sleep Policy"),
+        ("ringtone",               "Nada Dering"),
+        ("volume_ring",            "Volume Ring"),
+        ("volume_music",           "Volume Media"),
     ]
-    for key, label in settings_keys:
-        val = run(["settings","get","system", key], timeout=3)
+    for key, label in settings_items:
+        val = run_cmd(["settings","get","system",key], timeout=3)
         if val and val != "null": row(label, val)
 
 
@@ -1389,37 +1534,36 @@ def fitur_android_lanjut():
 # MENU UTAMA
 # ══════════════════════════════════════════════════════════════════════════════
 MENU = [
-    ("1",  "🖥️   Info CPU (core, freq, governor, load avg)",     fitur_cpu),
-    ("2",  "💾   Info RAM (meminfo detail + swap)",               fitur_ram),
-    ("3",  "💿   Info Storage (mount + diskstats I/O)",           fitur_storage),
-    ("4",  "🔋   Info Baterai (tegangan, siklus, health)",        fitur_baterai),
-    ("5",  "🌡️   Suhu Hardware (thermal zones + hwmon)",          fitur_suhu),
-    ("6",  "🌐   Info Jaringan (IP, MAC, latensi TCP)",           fitur_network),
-    ("7",  "📱   Info Sistem & OS (getprop Android)",             fitur_os),
-    ("8",  "⚙️   Proses Aktif — Top 15 CPU (/proc)",             fitur_proses),
-    ("9",  "📡   Kecepatan Jaringan Real-time + speed test",      fitur_netspeed),
-    ("10", "⚡   Benchmark CPU (4 tes pure Python)",              fitur_benchmark),
-    ("11", "📊   Monitor Real-time (live 10 detik)",              fitur_monitor),
-    ("12", "📋   Laporan Lengkap (Export JSON + TXT)",            fitur_laporan),
-    ("13", "🎮   Info GPU (Adreno/Mali/DevFreq)         [NEWv2]", fitur_gpu),
-    ("14", "📶   WiFi Detail (signal, channel, AP)      [NEWv2]", fitur_wifi),
-    ("15", "🔧   Kernel & Modul Sistem                  [NEWv2]", fitur_kernel),
-    ("16", "🧮   Virtual Memory Stats (/proc/vmstat)    [NEWv2]", fitur_vmstat),
-    ("17", "🧭   Sensor IIO & Hardware Sensor           [NEWv2]", fitur_sensor),
-    ("18", "🤖   Android Lanjut (dumpsys, pm, wm)       [NEWv2]", fitur_android_lanjut),
+    ("1",  "🖥️   Info CPU (core, freq, governor, load avg)",          fitur_cpu),
+    ("2",  "💾   Info RAM (meminfo, swap, zRAM)",                     fitur_ram),
+    ("3",  "💿   Info Storage (mount, df, space)",                    fitur_storage),
+    ("4",  "🔋   Info Baterai (tegangan, arus, health, siklus)",      fitur_baterai),
+    ("5",  "🌡️   Suhu Hardware (thermal zones, baterai)",             fitur_suhu),
+    ("6",  "🌐   Info Jaringan (IP, statistik, latensi TCP)",         fitur_network),
+    ("7",  "📱   Info Sistem & OS (getprop Android lengkap)",         fitur_os),
+    ("8",  "⚙️   Proses Aktif (top / ps — Android 10+ compatible)",  fitur_proses),
+    ("9",  "📡   Kecepatan Jaringan + uji download real",             fitur_netspeed),
+    ("10", "⚡   Benchmark CPU (4 tes pure Python)",                  fitur_benchmark),
+    ("11", "📊   Monitor Real-time (CPU+RAM+Suhu+Net live)",          fitur_monitor),
+    ("12", "📋   Laporan Lengkap (Export JSON + TXT)",                fitur_laporan),
+    ("13", "🎮   Info GPU (getprop + devfreq — tanpa root)",          fitur_gpu),
+    ("14", "📶   WiFi Detail (interface + getprop + dumpsys)",        fitur_wifi),
+    ("15", "🔧   Kernel & Parameter Sistem",                          fitur_kernel),
+    ("16", "🧮   Virtual Memory Stats (/proc/vmstat)",                fitur_vmstat),
+    ("17", "🧭   Sensor Hardware (dumpsys + IIO + input)",            fitur_sensor),
+    ("18", "🤖   Android Lanjut (pm, wm, settings, getprop++)",      fitur_android_lanjut),
 ]
 
 def show_menu():
-    print(f"\n{C.BOLD}{C.MAG}{'═'*66}{C.RST}")
-    print(f"  {C.BOLD}{C.WHT}   CEK HARDWARE — ANDROID v2.0  ·  ZERO DEPENDENCY{C.RST}")
-    print(f"  {C.DIM}{C.GRY}   Baca /proc & /sys langsung — tanpa psutil{C.RST}")
-    print(f"{C.BOLD}{C.MAG}{'═'*66}{C.RST}")
+    print(f"\n{C.BOLD}{C.MAG}{'═'*68}{C.RST}")
+    print(f"  {C.BOLD}{C.WHT}   CEK HARDWARE ANDROID v3.0  ·  ZERO DEPENDENCY{C.RST}")
+    print(f"  {C.DIM}{C.GRY}   Support Android 10+ · Tanpa root · Tanpa psutil{C.RST}")
+    print(f"{C.BOLD}{C.MAG}{'═'*68}{C.RST}")
     for k, label, _ in MENU:
-        color = C.YLW if "NEWv2" in label else C.CYN
-        print(f"  {color}{k:>3}{C.RST}  {label}")
+        print(f"  {C.CYN}{k:>3}{C.RST}  {label}")
     print(f"\n  {C.BOLD}{C.GRN}    0{C.RST}  🚀 Jalankan Semua 18 Fitur")
     print(f"  {C.RED}    q{C.RST}  ❌ Keluar")
-    print(f"{C.BOLD}{C.MAG}{'─'*66}{C.RST}")
+    print(f"{C.BOLD}{C.MAG}{'─'*68}{C.RST}")
 
 def main():
     fmap = {k: fn for k, _, fn in MENU}
@@ -1435,15 +1579,17 @@ def main():
         elif ch == "0":
             for k, label, fn in MENU:
                 print(f"\n  {C.GRY}▶ {label}{C.RST}")
-                try: fn()
-                except Exception as e: print(f"  {C.RED}Error: {e}{C.RST}")
+                try:    fn()
+                except Exception as e:
+                    print(f"  {C.RED}Error di {label}: {type(e).__name__}: {e}{C.RST}")
         elif ch in fmap:
-            try: fmap[ch]()
-            except Exception as e: print(f"\n  {C.RED}Error: {e}{C.RST}")
+            try:    fmap[ch]()
+            except Exception as e:
+                print(f"\n  {C.RED}Error: {type(e).__name__}: {e}{C.RST}")
         else:
-            print(f"\n  {C.RED}⚠  Pilihan tidak valid. Masukkan 1-18, 0, atau q.{C.RST}")
+            print(f"\n  {C.RED}⚠  Masukkan 1-18, 0, atau q{C.RST}")
 
-        try: input(f"\n  {C.GRY}[Tekan Enter untuk kembali ke menu...]{C.RST}")
+        try:    input(f"\n  {C.GRY}[Tekan Enter untuk kembali ke menu...]{C.RST}")
         except (KeyboardInterrupt, EOFError): break
 
 if __name__ == "__main__":
