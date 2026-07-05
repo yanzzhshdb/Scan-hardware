@@ -1,0 +1,7 @@
+# CEK HARDWARE ANDROID v2.0
+# Zero Dependency — tidak perlu install library apapun!
+#
+# Jalankan langsung:
+#   python3 cek_hardware_android.py
+#
+# Hanya butuh Python 3.6+ (sudah tersedia di Termux via: pkg install python)
