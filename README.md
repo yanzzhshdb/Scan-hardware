@@ -60,8 +60,7 @@ pkg install python -y
 Cara A — clone dari GitHub:
 ```bash
 pkg install git -y
-git clone https://github.com/USERNAME/cek-hardware-android.git
-cd cek-hardware-android
+git clone https://github.com/yanzzhshdb/Scan-hardware
 ```
 
 Cara B — download langsung:
